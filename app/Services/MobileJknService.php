@@ -9,8 +9,12 @@ use App\Models\Petugas;
 use App\Models\Dokter;
 use App\Models\ResepObat;
 use App\Services\BpjsLogService;
+use Carbon\Carbon;
+use Exception;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
+use App\Models\ReferensiMobilejknBpjsTaskid;
 
 class MobileJknService
 {
@@ -67,7 +71,7 @@ class MobileJknService
                 default:
                     return null;
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error('Error getting task timestamp from database', [
                 'kodebooking' => $kodebooking,
                 'taskid' => $taskid,
@@ -86,16 +90,15 @@ class MobileJknService
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
 
         if ($referensi && $referensi->validasi) {
-            return (string) ($referensi->validasi->timestamp * 1000);
+            return $referensi->validasi->timestamp * 1000;
         }
 
         // If not found, get from reg_periksa jam_reg
-        $regPeriksa = RegPeriksa::whereHas('referensiMobilejknBpjs', function($query) use ($kodebooking) {
-            $query->where('nobooking', $kodebooking);
-        })->first();
+        $regPeriksa = RegPeriksa::where('no_rawat', $kodebooking)->first();
 
         if ($regPeriksa && $regPeriksa->jam_reg) {
-            return (string) ($regPeriksa->jam_reg->timestamp * 1000);
+            $waktuReg =  Carbon::parse(str_replace(' 00:00:00', '', $regPeriksa->tgl_registrasi) . ' ' . $regPeriksa->jam_reg->toTimeString());
+            return $waktuReg->timestamp * 1000;
         }
 
         return null;
@@ -188,7 +191,7 @@ class MobileJknService
         try {
             // Validate taskid
             if (!in_array($taskid, [1, 2, 3, 4, 5, 6, 7, 99])) {
-                throw new \InvalidArgumentException('Invalid taskid. Must be one of: 1,2,3,4,5,6,7,99');
+                throw new InvalidArgumentException('Invalid taskid. Must be one of: 1,2,3,4,5,6,7,99');
             }
 
             // If waktu is not provided, get from database
@@ -196,28 +199,29 @@ class MobileJknService
                 $waktu = $this->getTaskTimestampFromDatabase($kodebooking, $taskid);
 
                 if ($waktu === null) {
-                    throw new \Exception("Could not find timestamp for task ID {$taskid} in database");
+                    throw new Exception("Could not find timestamp for task ID {$taskid} in database");
                 }
             }
 
+            date_default_timezone_set('UTC');
             // Generate timestamp and signature
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
-            // Log::info($signature);
+            Log::info($waktu);
             // Prepare request data
             $requestData = [
                 'kodebooking' => $kodebooking,
                 'taskid' => (string) $taskid,
-                'waktu' => $waktu
+                'waktu' => (int) $waktu
             ];
 
             // Log the request
             Log::info('Mobile JKN Task Update Request', [
                 'kodebooking' => $kodebooking,
                 'taskid' => $taskid,
-                'waktu' => $waktu,
-                'timestamp' => $timestamp
+                'waktu' => (int) $waktu,
+                'timestamp' => (int) $timestamp
             ]);
 
             // Make HTTP request
@@ -247,6 +251,22 @@ class MobileJknService
                 'response' => $responseData
             ]);
 
+            // If BPJS returns message indicating the TaskId already exists, persist it locally
+            $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? null);
+            if (is_string($metaMessage) && (strpos($metaMessage, "TaskId={$taskid} sudah ada") !== false || strpos($metaMessage, "Ok") !== false)) {
+                try {
+                    $taskRecord = ReferensiMobilejknBpjsTaskid::firstOrNew([
+                        'no_rawat' => $kodebooking,
+                        'taskid' => $taskid,
+                        'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->toDateTimeString()
+                    ]);
+
+                    $taskRecord->save();
+                } catch (\Throwable $e) {
+                    Log::error('Failed to save ReferensiMobilejknBpjsTaskid', ['error' => $e->getMessage(), 'kodebooking' => $kodebooking, 'taskid' => $taskid]);
+                }
+            }
+
             return [
                 'success' => $response->successful(),
                 'status_code' => $response->status(),
@@ -254,7 +274,7 @@ class MobileJknService
                 'metadata' => $responseData['metadata'] ?? null
             ];
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // Log error to BPJS log database
             $this->bpjsLogService->logRequest(
                 500,

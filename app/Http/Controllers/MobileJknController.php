@@ -30,14 +30,16 @@ class MobileJknController extends Controller
     public function updateTaskId(Request $request): JsonResponse
     {
         $data = $request->all();
-        if (!isset($data['kodebooking'], $data['taskid'], $data['waktu'])) {
+        if (!isset($data['kodebooking'], $data['taskid'])) {
             return response()->json(['success' => false, 'message' => 'Missing required fields'], 422);
         }
+
         try {
             $result = $this->mobileJknService->updateTaskId(
                 $data['kodebooking'],
                 (int)$data['taskid'],
-                $data['waktu']
+                null
+                // $data['waktu']
             );
             return response()->json([
                 'success' => $result['success'],

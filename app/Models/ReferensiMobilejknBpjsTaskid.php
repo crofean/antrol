@@ -15,6 +15,8 @@ class ReferensiMobilejknBpjsTaskid extends Model
     // Laravel doesn't natively support composite keys, so we'll handle it manually
     public $incrementing = false;
 
+    public $timestamps = false;
+
     protected $keyType = 'string';
 
     /**

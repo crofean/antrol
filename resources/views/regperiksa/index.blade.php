@@ -564,7 +564,7 @@
             taskIdPayload = {
                 kodebooking: kodeBooking,
                 taskid: taskId,
-                waktu: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                // waktu: new Date().toISOString().slice(0, 19).replace('T', ' ')
             };
             
             // If kodeBooking is empty and taskId is 3, we need to add antrean first
