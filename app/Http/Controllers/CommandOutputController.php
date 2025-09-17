@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\RunBpjsTaskIdCommand;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Log;
 
 class CommandOutputController extends Controller
 {
@@ -165,7 +166,7 @@ class CommandOutputController extends Controller
         // queue worker configuration or direct process termination
         try {
             // Log the stop request
-            \Illuminate\Support\Facades\Log::info('Command stop requested', [
+            Log::info('Command stop requested', [
                 'job_id' => $jobId,
                 'user_id' => auth()->id() ?? 'unauthenticated',
                 'timestamp' => now()->toIso8601String()

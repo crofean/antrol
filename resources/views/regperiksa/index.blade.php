@@ -176,14 +176,13 @@
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registration</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Patient Name</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rekam Medis</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No Kartu</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task IDs & Times</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Doctor</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Polyclinic</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registrasi</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jam</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pasien</th>
+                                {{-- <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rekam Medis</th> --}}
+                                {{-- <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No Kartu</th> --}}
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task ID & Waktu</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Poliklinik | Dokter</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SEP</th>
                             </tr>
@@ -195,7 +194,9 @@
                                         {{ $patients->firstItem() + $index }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->no_rawat }}
+                                        ID : {{ $patient->no_rawat }} <br> 
+                                        RM : {{ $patient->no_rkm_medis }} <br> 
+                                        Askes : {{ $patient->pasien->no_peserta ?? '-' }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                         {{ $patient->jam_reg ? $patient->jam_reg->format('H:i') : '-' }}
@@ -209,12 +210,12 @@
                                             </div>
                                         </div>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->no_rkm_medis }}
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->referensiMobilejknBpjs->nomorkartu ?? '-' }}
-                                    </td>
+                                    {{-- <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        
+                                    </td> --}}
+                                    {{-- <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        
+                                    </td> --}}
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                         @if($patient->referensiMobilejknBpjsTaskid->count() > 0)
                                             <div class="flex flex-col space-y-1">
@@ -235,7 +236,7 @@
                                                     <i class="fas fa-paper-plane mr-1"></i> Send Next Task ID
                                                 </button>
                                             </div>
-                                        @elseif($patient->referensiMobilejknBpjs)
+                                        @else
                                             <div class="flex flex-col space-y-2">
                                                 <div class="flex items-center space-x-2">
                                                     <span class="text-gray-500">No tasks</span>
@@ -251,15 +252,15 @@
                                                     <i class="fas fa-play mr-1"></i> Start Task ID Flow
                                                 </button>
                                             </div>
-                                        @else
-                                            <span>-</span>
+                                        {{-- @else
+                                            <span>-</span> --}}
                                         @endif
                                     </td>
+                                    {{-- <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        
+                                    </td> --}}
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->kd_dokter }}
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->kd_poli }}
+                                        {{ $patient->poliklinik->nm_poli ?? 'N/A' }} <br> {{ $patient->dokter->nm_dokter ?? 'N/A' }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         @if($patient->stts == 'Belum')
@@ -603,10 +604,26 @@
                 .then(data => {
                     if (data.success && data.data) {
                         const patient = data.data;
-                        
+
+                        // If BPJS bridging SEP exists, treat as already-registered in BPJS
+                        if (patient.bridging_sep != null) {
+                            // Build Task ID 3 payload using patient fields from the response
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 3,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: patient.jam_reg || (patient.tgl_registrasi ? (patient.tgl_registrasi.split('T')[0] + ' ' + (patient.jam_reg || '00:00:00')) : new Date().toISOString().slice(0, 19).replace('T', ' '))
+                            };
+
+                            // Display the Task ID form (Pasien datang) pre-filled with SEP data
+                            displayTaskIdForm(3, "Pasien check-in / kedatangan", taskIdPayload, patient);
+                            return;
+                        }
+
+                        // No SEP found — proceed with Add Antrean flow
                         // Build the add antrean request payload
                         const addAntreanPayload = {
-                            kodebooking: generateBookingCode(),
+                            kodebooking: patient.no_rawat,
                             jenispasien: "JKN",
                             nomorkartu: patient.no_peserta || "",
                             nik: patient.pasien?.no_ktp || "",
@@ -630,7 +647,7 @@
                             kuotanonjkn: 30,
                             keterangan: "Peserta harap 30 menit sebelum dilayani"
                         };
-                        
+
                         displayAddAntreanForm(addAntreanPayload, noRawat);
                     } else {
                         displayErrorContent("Failed to load patient data");
@@ -981,7 +998,6 @@
                             <div class="flex-shrink-0">
                                 <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-                                </svg>
                             </div>
                             <div class="ml-3">
                                 <p class="text-sm text-red-700">

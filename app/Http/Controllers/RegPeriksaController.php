@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\MobileJknService;
 use App\Services\RegPeriksaService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -11,10 +12,12 @@ use Carbon\Carbon;
 class RegPeriksaController extends Controller
 {
     protected $regPeriksaService;
+    protected $mobileJknService;
 
-    public function __construct(RegPeriksaService $regPeriksaService)
+    public function __construct(RegPeriksaService $regPeriksaService, MobileJknService $mobileJknService)
     {
         $this->regPeriksaService = $regPeriksaService;
+        $this->mobileJknService = $mobileJknService;
     }
 
     /**
@@ -148,7 +151,12 @@ class RegPeriksaController extends Controller
     public function getPatient(): JsonResponse
     {
         $noRawat = request()->get('no_rawat');
+        $include = request()->get('include', 'regperiksa');
         $patient = $this->regPeriksaService->getPatientByNoRawat($noRawat);
+
+        if ($include === 'task') {
+            $task = $this->mobileJknService->getPatientDataForTaskId($noRawat);
+        }
 
         if (!$patient) {
             return response()->json([
@@ -159,7 +167,8 @@ class RegPeriksaController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $patient
+            'data' => $patient,
+            'task' => $task ?? null
         ]);
     }
 

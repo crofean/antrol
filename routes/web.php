@@ -10,6 +10,10 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::get('/time', function() {
+    echo now();
+});
+
 // Mobile JKN API Routes
 Route::prefix('api/mobilejkn')->group(function () {
     Route::post('/update-task-id', [MobileJknController::class, 'updateTaskId']);
@@ -72,3 +76,4 @@ Route::prefix('api/command-output')->group(function () {
     Route::get('/by-code', [CommandOutputController::class, 'getOutputsByCode']);
     Route::get('/by-task', [CommandOutputController::class, 'getOutputsByTask']);
 });
+Route::post('/api/mobilejkn/update-task-id', [App\Http\Controllers\MobileJknController::class, 'updateTaskId']);

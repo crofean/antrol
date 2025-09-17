@@ -156,7 +156,7 @@ class RegPeriksaService
      */
     public function getPatientsWithFilters(array $filters = [], int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $query = RegPeriksa::with(['referensiMobilejknBpjs', 'bridgingSep', 'referensiMobilejknBpjsTaskid', 'pasien']);
+        $query = RegPeriksa::with(['referensiMobilejknBpjs', 'bridgingSep', 'referensiMobilejknBpjsTaskid', 'pasien', 'dokter', 'poliklinik', 'penjab']);
 
         // Apply date filter
         if (isset($filters['date'])) {

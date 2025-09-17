@@ -39,7 +39,7 @@ class MobileJknService
     protected function generateSignature(string $timestamp): string
     {
         $data = $this->consId . '&' . $timestamp;
-        return hash_hmac('sha256', $data, $this->secretKey);
+        return hash_hmac('sha256', $data, $this->secretKey, true);
     }
 
 
@@ -202,8 +202,9 @@ class MobileJknService
 
             // Generate timestamp and signature
             $timestamp = $this->getUtcTimestamp();
-            $signature = $this->generateSignature($timestamp);
+            $signature = base64_encode($this->generateSignature($timestamp));
 
+            // Log::info($signature);
             // Prepare request data
             $requestData = [
                 'kodebooking' => $kodebooking,
@@ -222,9 +223,9 @@ class MobileJknService
             // Make HTTP request
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-                'x-cons-id' => $this->consId,
-                'x-timestamp' => $timestamp,
-                'x-signature' => $signature,
+                'X-cons-id' => $this->consId,
+                'X-timestamp' => $timestamp,
+                'X-signature' => $signature,
                 'user_key' => $this->userKey,
             ])->post($this->baseUrl . '/antrean/updatewaktu', $requestData);
 
@@ -435,7 +436,7 @@ class MobileJknService
      */
     protected function getUtcTimestamp(): string
     {
-        return (string) (now()->utc()->timestamp * 1000); // Convert to milliseconds
+        return strval(time()-strtotime('1970-01-01 00:00:00')); // Convert to milliseconds
     }
     
     /**
@@ -471,7 +472,9 @@ class MobileJknService
             
             // Get prescription data
             $resepObat = ResepObat::where('no_rawat', $regNo)->first();
-            
+           
+            $kode = $referral->kodebooking ? $referral->kodebooking : $regPeriksa->no_rawat;
+
             return [
                 'registration' => $regPeriksa,
                 'doctor' => $dokter,
@@ -479,13 +482,13 @@ class MobileJknService
                 'examination' => $pemeriksaan,
                 'prescription' => $resepObat,
                 'task_timestamps' => [
-                    '3' => $this->getTask3Timestamp($referral->kodebooking),
-                    '4' => $this->getTask4Timestamp($referral->kodebooking),
-                    '5' => $this->getTask5Timestamp($referral->kodebooking),
-                    '6' => $this->getTask6Timestamp($referral->kodebooking),
-                    '7' => $this->getTask7Timestamp($referral->kodebooking)
+                    '3' => $this->getTask3Timestamp($kode),
+                    '4' => $this->getTask4Timestamp($kode),
+                    '5' => $this->getTask5Timestamp($kode),
+                    '6' => $this->getTask6Timestamp($kode),
+                    '7' => $this->getTask7Timestamp($kode)
                 ],
-                'kodebooking' => $referral->kodebooking
+                'kodebooking' => $kode
             ];
             
         } catch (\Exception $e) {
