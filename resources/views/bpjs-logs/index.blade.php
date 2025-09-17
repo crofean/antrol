@@ -20,6 +20,9 @@
                     <a href="{{ route('regperiksa.index') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition duration-200">
                         <i class="fas fa-arrow-left mr-2"></i>Back to Patients
                     </a>
+                    <a href="{{ route('mobilejkn.taskid-logs') }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition duration-200">
+                        <i class="fas fa-tasks mr-2"></i>Task ID Logs
+                    </a>
                 </div>
             </div>
 

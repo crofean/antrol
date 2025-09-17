@@ -3,16 +3,22 @@
 namespace App\Http\Controllers;
 
 use App\Services\MobileJknService;
+use App\Services\BpjsLogService;
+use App\Models\BpjsWsRsLog;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\View\View;
+use Illuminate\Contracts\View\Factory;
 
 class MobileJknController extends Controller
 {
     protected $mobileJknService;
+    protected $bpjsLogService;
 
-    public function __construct(MobileJknService $mobileJknService)
+    public function __construct(MobileJknService $mobileJknService, BpjsLogService $bpjsLogService)
     {
         $this->mobileJknService = $mobileJknService;
+        $this->bpjsLogService = $bpjsLogService;
     }
 
     /**
@@ -98,5 +104,180 @@ class MobileJknController extends Controller
         $result = $this->mobileJknService->batchUpdateTaskIds($request->updates);
 
         return response()->json($result);
+    }
+
+    /**
+     * Display task ID logs view
+     *
+     * @return View
+     */
+    public function taskIdLogs(): View
+    {
+        // Get recent logs for task ID updates
+        $logs = $this->bpjsLogService->getTaskIdLogs();
+        
+        // Get task ID stats
+        $successCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
+            ->where('code', '>=', 200)
+            ->where('code', '<', 300)
+            ->count();
+            
+        $errorCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
+            ->where('code', '>=', 400)
+            ->count();
+            
+        $totalCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')->count();
+
+        // Get antrean add stats
+        $antreanSuccessCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')
+            ->where('code', '>=', 200)
+            ->where('code', '<', 300)
+            ->count();
+            
+        $antreanErrorCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')
+            ->where('code', '>=', 400)
+            ->count();
+            
+        $antreanTotalCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')->count();
+        
+        return view('mobilejkn.taskid-logs', compact(
+            'logs', 
+            'successCount', 
+            'errorCount', 
+            'totalCount',
+            'antreanSuccessCount',
+            'antreanErrorCount',
+            'antreanTotalCount'
+        ));
+    }
+
+    /**
+     * Get task ID logs API endpoint
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getTaskIdLogs(Request $request): JsonResponse
+    {
+        $request->validate([
+            'perPage' => 'nullable|integer|min:10|max:100',
+            'page' => 'nullable|integer|min:1',
+        ]);
+
+        $perPage = $request->perPage ?? 25;
+        $page = $request->page ?? 1;
+
+        $logs = $this->bpjsLogService->getTaskIdLogs($perPage, $page);
+
+        return response()->json($logs);
+    }
+
+    /**
+     * Get filtered task ID logs API endpoint
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getFilteredTaskIdLogs(Request $request): JsonResponse
+    {
+        $request->validate([
+            'startDate' => 'required|date_format:Y-m-d',
+            'endDate' => 'required|date_format:Y-m-d',
+            'perPage' => 'nullable|integer|min:10|max:100',
+            'page' => 'nullable|integer|min:1',
+        ]);
+
+        $perPage = $request->perPage ?? 25;
+        $page = $request->page ?? 1;
+
+        $logs = $this->bpjsLogService->filterTaskIdLogs(
+            $request->startDate . ' 00:00:00',
+            $request->endDate . ' 23:59:59',
+            $perPage,
+            $page
+        );
+
+        return response()->json($logs);
+    }
+    
+    /**
+     * Get antrean add logs API endpoint
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getAntreanAddLogs(Request $request): JsonResponse
+    {
+        $request->validate([
+            'perPage' => 'nullable|integer|min:10|max:100',
+            'page' => 'nullable|integer|min:1',
+        ]);
+
+        $perPage = $request->perPage ?? 25;
+        $page = $request->page ?? 1;
+
+        $logs = $this->bpjsLogService->getAntreanAddLogs($perPage, $page);
+
+        return response()->json($logs);
+    }
+
+    /**
+     * Add a new antrean (appointment) for a patient
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function addAntrean(Request $request): JsonResponse
+    {
+        $request->validate([
+            'payload' => 'required|array',
+        ]);
+
+        $payload = $request->payload;
+        
+        // Store registration number in the payload if provided
+        if ($request->has('no_rawat')) {
+            $payload['no_rawat'] = $request->no_rawat;
+        }
+
+        // Call the service method to add antrean
+        $result = $this->mobileJknService->addAntrean($payload);
+
+        return response()->json($result);
+    }
+    
+    /**
+     * Get patient data needed for task ID updates
+     *
+     * @param string $regNo
+     * @return JsonResponse
+     */
+    public function getPatientData(string $regNo): JsonResponse
+    {
+        $data = $this->mobileJknService->getPatientDataForTaskId($regNo);
+        
+        if (!$data) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Data not found',
+                'data' => null
+            ], 404);
+        }
+        
+        return response()->json([
+            'status' => true,
+            'message' => 'Data retrieved successfully',
+            'data' => $data
+        ]);
+    }
+    
+    /**
+     * Display the patient data view
+     *
+     * @return View|Factory
+     */
+    public function showPatientDataForm()
+    {
+        return view('mobilejkn.patient-data');
     }
 }

@@ -17,18 +17,31 @@ class MobileJknService
     protected $baseUrl;
     protected $consId;
     protected $userKey;
-    protected $secretKey;
+    protected $secretKey;    
     protected $bpjsLogService;
 
     public function __construct(BpjsLogService $bpjsLogService)
     {
         // You should configure these in your .env file or config
-        $this->baseUrl = config('services.mobilejkn.base_url', 'https://api.mobilejkn.com');
-        $this->consId = config('services.mobilejkn.cons_id');
-        $this->userKey = config('services.mobilejkn.user_key');
-        $this->secretKey = config('services.mobilejkn.secret_key');
+        $this->baseUrl = config('mobilejkn.base_url', 'https://apijkn.bpjs-kesehatan.go.id/antreanrs');
+        $this->consId = config('mobilejkn.cons_id');
+        $this->userKey = config('mobilejkn.user_key');
+        $this->secretKey = config('mobilejkn.secret_key');
         $this->bpjsLogService = $bpjsLogService;
     }
+
+    /**
+     * Generate signature for authentication
+     *
+     * @param string $timestamp
+     * @return string
+     */
+    protected function generateSignature(string $timestamp): string
+    {
+        $data = $this->consId . '&' . $timestamp;
+        return hash_hmac('sha256', $data, $this->secretKey);
+    }
+
 
     /**
      * Get timestamp for a specific task ID from database
@@ -422,18 +435,62 @@ class MobileJknService
      */
     protected function getUtcTimestamp(): string
     {
-        return (string) now()->utc()->timestamp * 1000; // Convert to milliseconds
+        return (string) (now()->utc()->timestamp * 1000); // Convert to milliseconds
     }
-
+    
     /**
-     * Generate HMAC signature
+     * Get patient data needed for task ID updates
      *
-     * @param string $timestamp
-     * @return string
+     * @param string $regNo
+     * @return array|null
      */
-    protected function generateSignature(string $timestamp): string
+    public function getPatientDataForTaskId(string $regNo): ?array
     {
-        $data = $this->consId . '&' . $timestamp;
-        return hash_hmac('sha256', $data, $this->secretKey);
+        try {
+            // Get registration data
+            $regPeriksa = RegPeriksa::where('no_rawat', $regNo)->first();
+            
+            if (!$regPeriksa) {
+                Log::error('Registration not found: ' . $regNo);
+                return null;
+            }
+            
+            // Get doctor information
+            $dokter = Dokter::find($regPeriksa->kd_dokter);
+            
+            // Get referral data from BPJS
+            $referral = ReferensiMobilejknBpjs::where('no_rawat', $regNo)->first();
+            
+            if (!$referral) {
+                Log::error('BPJS referral not found for: ' . $regNo);
+                return null;
+            }
+            
+            // Get examination data
+            $pemeriksaan = PemeriksaanRalan::where('no_rawat', $regNo)->first();
+            
+            // Get prescription data
+            $resepObat = ResepObat::where('no_rawat', $regNo)->first();
+            
+            return [
+                'registration' => $regPeriksa,
+                'doctor' => $dokter,
+                'referral' => $referral,
+                'examination' => $pemeriksaan,
+                'prescription' => $resepObat,
+                'task_timestamps' => [
+                    '3' => $this->getTask3Timestamp($referral->kodebooking),
+                    '4' => $this->getTask4Timestamp($referral->kodebooking),
+                    '5' => $this->getTask5Timestamp($referral->kodebooking),
+                    '6' => $this->getTask6Timestamp($referral->kodebooking),
+                    '7' => $this->getTask7Timestamp($referral->kodebooking)
+                ],
+                'kodebooking' => $referral->kodebooking
+            ];
+            
+        } catch (\Exception $e) {
+            Log::error('Error retrieving patient data for task ID: ' . $e->getMessage());
+            return null;
+        }
     }
 }

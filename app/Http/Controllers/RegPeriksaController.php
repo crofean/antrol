@@ -145,8 +145,9 @@ class RegPeriksaController extends Controller
      * @param string $noRawat
      * @return JsonResponse
      */
-    public function getPatient(string $noRawat): JsonResponse
+    public function getPatient(): JsonResponse
     {
+        $noRawat = request()->get('no_rawat');
         $patient = $this->regPeriksaService->getPatientByNoRawat($noRawat);
 
         if (!$patient) {

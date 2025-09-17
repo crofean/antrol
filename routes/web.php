@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\MobileJknController;
 use App\Http\Controllers\RegPeriksaController;
 use App\Http\Controllers\BpjsLogController;
+use App\Http\Controllers\CommandOutputController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -15,6 +16,10 @@ Route::prefix('api/mobilejkn')->group(function () {
     Route::post('/update-task-id-from-db', [MobileJknController::class, 'updateTaskIdFromDatabase']);
     Route::post('/update-task-id-now', [MobileJknController::class, 'updateTaskIdNow']);
     Route::post('/batch-update-task-ids', [MobileJknController::class, 'batchUpdateTaskIds']);
+    Route::get('/task-id-logs', [MobileJknController::class, 'getTaskIdLogs']);
+    Route::get('/filtered-task-id-logs', [MobileJknController::class, 'getFilteredTaskIdLogs']);
+    Route::get('/get-patient-data/{reg_no}', [MobileJknController::class, 'getPatientData']);
+    Route::get('/antrean-logs', [MobileJknController::class, 'getAntreanAddLogs']);
 });
 
 // RegPeriksa Routes
@@ -22,12 +27,25 @@ Route::prefix('regperiksa')->group(function () {
     Route::get('/', [RegPeriksaController::class, 'index'])->name('regperiksa.index');
 });
 
+// Mobile JKN Routes
+Route::prefix('mobilejkn')->group(function () {
+    Route::get('/taskid-logs', [MobileJknController::class, 'taskIdLogs'])->name('taskid.logs');
+    Route::get('/run-command', [CommandOutputController::class, 'index'])->name('command.index');
+    Route::get('/patient-data', [MobileJknController::class, 'showPatientDataForm'])->name('patient.data');
+});
+
+// Command Output Routes
+Route::post('/run-command', [CommandOutputController::class, 'runCommand'])->name('command.run');
+Route::post('/stop-command', [CommandOutputController::class, 'stopCommand'])->name('command.stop');
+Route::get('/command-output/{jobId}', [CommandOutputController::class, 'getOutput'])->name('command.output');
+Route::get('/debug-command-cache/{jobId?}', [CommandOutputController::class, 'debugCache'])->name('command.debug');
+
 // RegPeriksa API Routes
 Route::prefix('api/regperiksa')->group(function () {
     Route::get('/today-bpjs', [RegPeriksaController::class, 'getTodayBpjsPatients']);
     Route::get('/filtered', [RegPeriksaController::class, 'getFilteredPatients']);
     Route::get('/statistics', [RegPeriksaController::class, 'getStatistics']);
-    Route::get('/patient/{noRawat}', [RegPeriksaController::class, 'getPatient']);
+    Route::get('/patient', [RegPeriksaController::class, 'getPatient']);
     Route::get('/by-status', [RegPeriksaController::class, 'getPatientsByStatus']);
     Route::get('/by-doctor', [RegPeriksaController::class, 'getPatientsByDoctor']);
     Route::get('/by-polyclinic', [RegPeriksaController::class, 'getPatientsByPolyclinic']);
@@ -45,4 +63,12 @@ Route::prefix('api/bpjs-logs')->group(function () {
     Route::get('/by-date-range', [BpjsLogController::class, 'getLogsByDateRange']);
     Route::get('/by-code', [BpjsLogController::class, 'getLogsByCode']);
     Route::get('/by-task', [BpjsLogController::class, 'getLogsByTask']);
+});
+
+// Command Output API Routes
+Route::prefix('api/command-output')->group(function () {
+    Route::get('/', [CommandOutputController::class, 'getOutputs']);
+    Route::get('/by-date-range', [CommandOutputController::class, 'getOutputsByDateRange']);
+    Route::get('/by-code', [CommandOutputController::class, 'getOutputsByCode']);
+    Route::get('/by-task', [CommandOutputController::class, 'getOutputsByTask']);
 });

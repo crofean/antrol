@@ -32,6 +32,9 @@
                     <a href="{{ route('bpjs-logs.index') }}" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
                         <i class="fas fa-history mr-2"></i>BPJS Logs
                     </a>
+                    <a href="{{ route('taskid.logs') }}" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        <i class="fas fa-tasks mr-2"></i>Task ID Logs
+                    </a>
                 </div>
             </div>
 
@@ -226,14 +229,26 @@
                                                         </button>
                                                     </div>
                                                 @endforeach
+                                                <button onclick="showTaskIdModal('{{ $patient->no_rawat }}', '{{ $patient->referensiMobilejknBpjs->kodebooking ?? '' }}', {{ $patient->referensiMobilejknBpjsTaskid->max('taskid') }})"
+                                                        class="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition duration-200 flex items-center justify-center"
+                                                        title="Send Next Task ID">
+                                                    <i class="fas fa-paper-plane mr-1"></i> Send Next Task ID
+                                                </button>
                                             </div>
                                         @elseif($patient->referensiMobilejknBpjs)
-                                            <div class="flex items-center space-x-2">
-                                                <span class="text-gray-500">No tasks</span>
-                                                <button onclick="showLogModal('{{ $patient->no_rawat }}', null)"
-                                                        class="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition duration-200"
-                                                        title="View BPJS Logs">
-                                                    <i class="fas fa-search"></i>
+                                            <div class="flex flex-col space-y-2">
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-gray-500">No tasks</span>
+                                                    <button onclick="showLogModal('{{ $patient->no_rawat }}', null)"
+                                                            class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded transition duration-200"
+                                                            title="View BPJS Logs">
+                                                        <i class="fas fa-search"></i>
+                                                    </button>
+                                                </div>
+                                                <button onclick="showTaskIdModal('{{ $patient->no_rawat }}', '{{ $patient->referensiMobilejknBpjs->kodebooking ?? '' }}', 0)"
+                                                        class="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition duration-200 flex items-center justify-center"
+                                                        title="Start Task ID Flow">
+                                                    <i class="fas fa-play mr-1"></i> Start Task ID Flow
                                                 </button>
                                             </div>
                                         @else
@@ -355,6 +370,12 @@
         setTimeout(function() {
             window.location.reload();
         }, 300000);
+        
+        // Global variables for Task ID handling
+        let currentNoRawat = null;
+        let currentKodeBooking = null;
+        let currentTaskId = null;
+        let taskIdPayload = {};
 
         // Modal functionality
         function showLogModal(noRawat, taskId) {
@@ -484,15 +505,6 @@
             `;
         }
 
-        function formatJson(jsonString) {
-            try {
-                const parsed = JSON.parse(jsonString);
-                return JSON.stringify(parsed, null, 2);
-            } catch (e) {
-                return jsonString;
-            }
-        }
-
         function closeLogModal() {
             document.getElementById('logModal').classList.add('hidden');
         }
@@ -503,6 +515,654 @@
                 closeLogModal();
             }
         });
+
+        // Task ID Modal functionality
+        function showTaskIdModal(noRawat, kodeBooking, lastTaskId) {
+            // Store current data
+            currentNoRawat = noRawat;
+            currentKodeBooking = kodeBooking;
+            currentTaskId = lastTaskId;
+            
+            // Show loading state
+            document.getElementById('taskIdModalContent').innerHTML = `
+                <div class="flex items-center justify-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span class="ml-2 text-gray-600">Loading data...</span>
+                </div>
+            `;
+            
+            // Show the modal
+            document.getElementById('taskIdModal').classList.remove('hidden');
+            
+            // Determine next task ID
+            let nextTaskId = determineNextTaskId(lastTaskId);
+            
+            // Update modal title
+            document.getElementById('taskIdModalTitle').textContent = `Send Task ID ${nextTaskId}`;
+            
+            // Fetch necessary data for the task ID
+            fetchTaskIdData(noRawat, kodeBooking, nextTaskId);
+        }
+        
+        function determineNextTaskId(lastTaskId) {
+            // Logic to determine the next task ID based on the last one
+            if (lastTaskId === 0 || !lastTaskId) {
+                // No task IDs yet, start with add antrean or task ID 3
+                return 3;
+            } else if (lastTaskId < 7) {
+                // Return the next task ID in sequence
+                return lastTaskId + 1;
+            } else {
+                // Task ID 7 is the last one
+                return 99; // Special case for task ID 99 (Batal)
+            }
+        }
+        
+        function fetchTaskIdData(noRawat, kodeBooking, taskId) {
+            // Default request payload
+            taskIdPayload = {
+                kodebooking: kodeBooking,
+                taskid: taskId,
+                waktu: new Date().toISOString().slice(0, 19).replace('T', ' ')
+            };
+            
+            // If kodeBooking is empty and taskId is 3, we need to add antrean first
+            if ((!kodeBooking || kodeBooking === '') && taskId === 3) {
+                fetchAddAntreanData(noRawat);
+                return;
+            }
+            
+            // For each task ID, get the appropriate data
+            switch(taskId) {
+                case 3: // Pasien datang
+                    fetchPatientData(noRawat);
+                    break;
+                case 4: // Mulai layanan perawat/poli
+                    fetchNursingData(noRawat);
+                    break;
+                case 5: // Mulai layanan dokter
+                    fetchDoctorData(noRawat);
+                    break;
+                case 6: // Selesai layanan dokter
+                    fetchDoctorEndData(noRawat);
+                    break;
+                case 7: // Selesai layanan obat
+                    fetchMedicationData(noRawat);
+                    break;
+                case 99: // Batal
+                    displayCancelTaskData();
+                    break;
+                default:
+                    displayGenericTaskData(taskId);
+            }
+        }
+        
+        function fetchAddAntreanData(noRawat) {
+            fetch(`/api/regperiksa/patient?no_rawat=${noRawat}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        
+                        // Build the add antrean request payload
+                        const addAntreanPayload = {
+                            kodebooking: generateBookingCode(),
+                            jenispasien: "JKN",
+                            nomorkartu: patient.no_peserta || "",
+                            nik: patient.pasien?.no_ktp || "",
+                            nohp: patient.pasien?.no_tlp || "",
+                            kodepoli: patient.kd_poli || "",
+                            namapoli: patient.poliklinik?.nm_poli || "",
+                            pasienbaru: 0,
+                            norm: patient.no_rkm_medis || "",
+                            tanggalperiksa: patient.tgl_registrasi || "",
+                            kodedokter: patient.kd_dokter || "",
+                            namadokter: patient.dokter?.nm_dokter || "",
+                            jampraktek: "08:00-16:00",
+                            jeniskunjungan: 1,
+                            nomorreferensi: patient.no_rujukan || "",
+                            nomorantrean: patient.no_reg || "",
+                            angkaantrean: parseInt(patient.no_reg) || 1,
+                            estimasidilayani: estimateServiceTime(patient.jam_reg),
+                            sisakuotajkn: 5,
+                            kuotajkn: 30,
+                            sisakuotanonjkn: 5,
+                            kuotanonjkn: 30,
+                            keterangan: "Peserta harap 30 menit sebelum dilayani"
+                        };
+                        
+                        displayAddAntreanForm(addAntreanPayload, noRawat);
+                    } else {
+                        displayErrorContent("Failed to load patient data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient data:', error);
+                    displayErrorContent("Error loading patient data");
+                });
+        }
+        
+        function fetchPatientData(noRawat) {
+            fetch(`/api/regperiksa/patient/${noRawat}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        
+                        // Update the task ID payload with patient arrival time
+                        taskIdPayload.waktu = patient.jam_reg || taskIdPayload.waktu;
+                        
+                        displayTaskIdForm(3, "Pasien check-in / kedatangan", taskIdPayload, patient);
+                    } else {
+                        displayErrorContent("Failed to load patient data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient data:', error);
+                    displayErrorContent("Error loading patient data");
+                });
+        }
+        
+        function fetchNursingData(noRawat) {
+            fetch(`/api/regperiksa/patient/${noRawat}?include=pemeriksaan`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        const pemeriksaan = patient.pemeriksaan;
+                        
+                        // Update the task ID payload with nurse start time
+                        if (pemeriksaan && pemeriksaan.jam_rawat) {
+                            taskIdPayload.waktu = pemeriksaan.jam_rawat;
+                        }
+                        
+                        displayTaskIdForm(4, "Mulai layanan perawat/poli", taskIdPayload, patient);
+                    } else {
+                        displayErrorContent("Failed to load patient examination data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient examination data:', error);
+                    displayErrorContent("Error loading patient examination data");
+                });
+        }
+        
+        function fetchDoctorData(noRawat) {
+            fetch(`/api/regperiksa/patient/${noRawat}?include=pemeriksaan`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        const pemeriksaan = patient.pemeriksaan;
+                        
+                        // Update the task ID payload with doctor start time
+                        if (pemeriksaan && pemeriksaan.jam_rawat) {
+                            taskIdPayload.waktu = pemeriksaan.jam_rawat;
+                        }
+                        
+                        displayTaskIdForm(5, "Mulai layanan dokter", taskIdPayload, patient);
+                    } else {
+                        displayErrorContent("Failed to load patient examination data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient examination data:', error);
+                    displayErrorContent("Error loading patient examination data");
+                });
+        }
+        
+        function fetchDoctorEndData(noRawat) {
+            fetch(`/api/regperiksa/patient/${noRawat}?include=resep`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        const resep = patient.resep;
+                        
+                        // Update the task ID payload with doctor end time
+                        if (resep && resep.jam) {
+                            taskIdPayload.waktu = resep.jam;
+                        }
+                        
+                        displayTaskIdForm(6, "Selesai layanan dokter", taskIdPayload, patient);
+                    } else {
+                        displayErrorContent("Failed to load patient prescription data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient prescription data:', error);
+                    displayErrorContent("Error loading patient prescription data");
+                });
+        }
+        
+        function fetchMedicationData(noRawat) {
+            fetch(`/api/regperiksa/patient/${noRawat}?include=resep`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const patient = data.data;
+                        const resep = patient.resep;
+                        
+                        // Update the task ID payload with medication end time
+                        if (resep && resep.jam_penyerahan) {
+                            taskIdPayload.waktu = resep.jam_penyerahan;
+                        }
+                        
+                        displayTaskIdForm(7, "Selesai layanan obat", taskIdPayload, patient);
+                    } else {
+                        displayErrorContent("Failed to load patient medication data");
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching patient medication data:', error);
+                    displayErrorContent("Error loading patient medication data");
+                });
+        }
+        
+        function displayCancelTaskData() {
+            displayTaskIdForm(99, "Batal", taskIdPayload, null);
+        }
+        
+        function displayGenericTaskData(taskId) {
+            displayTaskIdForm(taskId, `Task ID ${taskId}`, taskIdPayload, null);
+        }
+        
+        function displayAddAntreanForm(payload, noRawat) {
+            document.getElementById('taskIdModalTitle').textContent = "Add Antrean";
+            
+            document.getElementById('taskIdModalContent').innerHTML = `
+                <div class="space-y-4">
+                    <p class="text-sm text-gray-700">No registration data found in BPJS Mobile JKN. You need to add an appointment first before sending task IDs.</p>
+                    
+                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4">
+                        <div class="flex">
+                            <div class="ml-3">
+                                <p class="text-sm text-blue-700">
+                                    <strong>Patient:</strong> ${payload.norm} - ${payload.nik}
+                                </p>
+                                <p class="text-sm text-blue-700">
+                                    <strong>Poli:</strong> ${payload.kodepoli} - ${payload.namapoli}
+                                </p>
+                                <p class="text-sm text-blue-700">
+                                    <strong>Doctor:</strong> ${payload.kodedokter} - ${payload.namadokter}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">API Request</label>
+                        <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto max-h-64">${formatJson(JSON.stringify(payload))}</pre>
+                    </div>
+                </div>
+            `;
+            
+            // Update send button text and action
+            document.getElementById('taskIdSendButton').textContent = "Add Antrean";
+            document.getElementById('taskIdSendButton').onclick = function() {
+                sendAddAntrean(payload, noRawat);
+            };
+        }
+        
+        function displayTaskIdForm(taskId, taskName, payload, patientData) {
+            let patientInfo = '';
+            
+            if (patientData) {
+                patientInfo = `
+                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+                        <div class="flex">
+                            <div class="ml-3">
+                                <p class="text-sm text-blue-700">
+                                    <strong>Patient:</strong> ${patientData.no_rkm_medis} - ${patientData.pasien?.nm_pasien || 'N/A'}
+                                </p>
+                                <p class="text-sm text-blue-700">
+                                    <strong>Registration:</strong> ${patientData.no_rawat}
+                                </p>
+                                ${patientData.kd_poli ? `<p class="text-sm text-blue-700">
+                                    <strong>Poli:</strong> ${patientData.kd_poli} - ${patientData.poliklinik?.nm_poli || 'N/A'}
+                                </p>` : ''}
+                                ${patientData.kd_dokter ? `<p class="text-sm text-blue-700">
+                                    <strong>Doctor:</strong> ${patientData.kd_dokter} - ${patientData.dokter?.nm_dokter || 'N/A'}
+                                </p>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('taskIdModalContent').innerHTML = `
+                <div class="space-y-4">
+                    ${patientInfo}
+                    
+                    <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-yellow-700">
+                                    You are about to send <strong>Task ID ${taskId}</strong> (${taskName}).
+                                </p>
+                                <p class="text-sm text-yellow-700">
+                                    Please verify the data before proceeding.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="waktu" class="block text-sm font-medium text-gray-700 mb-1">Timestamp</label>
+                            <input type="datetime-local" id="waktu" name="waktu" 
+                                value="${formatDatetimeForInput(payload.waktu)}"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">API Request</label>
+                        <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto max-h-64">${formatJson(JSON.stringify(payload))}</pre>
+                    </div>
+                </div>
+            `;
+            
+            // Update send button text and action
+            document.getElementById('taskIdSendButton').textContent = "Send Task ID";
+            document.getElementById('taskIdSendButton').onclick = function() {
+                const waktuInput = document.getElementById('waktu').value;
+                if (waktuInput) {
+                    payload.waktu = formatInputForDatetime(waktuInput);
+                }
+                sendTaskIdRequest(payload);
+            };
+        }
+        
+        function displayErrorContent(errorMessage) {
+            document.getElementById('taskIdModalContent').innerHTML = `
+                <div class="text-center py-8">
+                    <i class="fas fa-exclamation-triangle text-4xl text-red-300 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Error</h3>
+                    <p class="text-gray-500">${errorMessage}</p>
+                </div>
+            `;
+        }
+        
+        function sendAddAntrean(payload, noRawat) {
+            // Show loading
+            document.getElementById('taskIdSendButton').disabled = true;
+            document.getElementById('taskIdSendButton').innerHTML = `
+                <div class="flex items-center">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Processing...
+                </div>
+            `;
+            
+            fetch('/api/mobilejkn/add-antrean', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    payload: payload,
+                    no_rawat: noRawat
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Success - now we can send task ID 3
+                    const taskIdPayload = {
+                        kodebooking: payload.kodebooking,
+                        taskid: 3,
+                        waktu: payload.tanggalperiksa + ' ' + payload.estimasidilayani
+                    };
+                    
+                    // Update modal content
+                    document.getElementById('taskIdModalContent').innerHTML += `
+                        <div class="mt-4 bg-green-50 border-l-4 border-green-500 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-green-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-green-700">
+                                        <strong>Success!</strong> Appointment added successfully.
+                                    </p>
+                                    <p class="text-sm text-green-700">
+                                        Now sending Task ID 3...
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Send Task ID 3
+                    sendTaskIdRequest(taskIdPayload);
+                } else {
+                    // Error
+                    document.getElementById('taskIdModalContent').innerHTML += `
+                        <div class="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-red-700">
+                                        <strong>Error!</strong> ${data.message || 'Failed to add appointment'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">API Response</label>
+                            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto max-h-64">${formatJson(JSON.stringify(data.response || {}))}</pre>
+                        </div>
+                    `;
+                    
+                    // Re-enable button
+                    document.getElementById('taskIdSendButton').disabled = false;
+                    document.getElementById('taskIdSendButton').textContent = "Try Again";
+                }
+            })
+            .catch(error => {
+                console.error('Error sending add antrean request:', error);
+                
+                // Error
+                document.getElementById('taskIdModalContent').innerHTML += `
+                    <div class="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-red-700">
+                                    <strong>Error!</strong> ${error.message || 'Network error occurred'}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Re-enable button
+                document.getElementById('taskIdSendButton').disabled = false;
+                document.getElementById('taskIdSendButton').textContent = "Try Again";
+            });
+        }
+        
+        function sendTaskIdRequest(payload) {
+            // Show loading
+            document.getElementById('taskIdSendButton').disabled = true;
+            document.getElementById('taskIdSendButton').innerHTML = `
+                <div class="flex items-center">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Sending...
+                </div>
+            `;
+            
+            fetch('/api/mobilejkn/update-task-id', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Success
+                    document.getElementById('taskIdModalContent').innerHTML += `
+                        <div class="mt-4 bg-green-50 border-l-4 border-green-500 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-green-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-green-700">
+                                        <strong>Success!</strong> Task ID ${payload.taskid} sent successfully.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">API Response</label>
+                            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto max-h-64">${formatJson(JSON.stringify(data))}</pre>
+                        </div>
+                    `;
+                    
+                    // Change button to "Close" and reload page on click
+                    document.getElementById('taskIdSendButton').disabled = false;
+                    document.getElementById('taskIdSendButton').textContent = "Close and Refresh";
+                    document.getElementById('taskIdSendButton').onclick = function() {
+                        window.location.reload();
+                    };
+                } else {
+                    // Error
+                    document.getElementById('taskIdModalContent').innerHTML += `
+                        <div class="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-red-700">
+                                        <strong>Error!</strong> ${data.message || 'Failed to send task ID'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">API Response</label>
+                            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto max-h-64">${formatJson(JSON.stringify(data))}</pre>
+                        </div>
+                    `;
+                    
+                    // Re-enable button
+                    document.getElementById('taskIdSendButton').disabled = false;
+                    document.getElementById('taskIdSendButton').textContent = "Try Again";
+                }
+            })
+            .catch(error => {
+                console.error('Error sending task ID request:', error);
+                
+                // Error
+                document.getElementById('taskIdModalContent').innerHTML += `
+                    <div class="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-red-700">
+                                    <strong>Error!</strong> ${error.message || 'Network error occurred'}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Re-enable button
+                document.getElementById('taskIdSendButton').disabled = false;
+                document.getElementById('taskIdSendButton').textContent = "Try Again";
+            });
+        }
+        
+        function closeTaskIdModal() {
+            document.getElementById('taskIdModal').classList.add('hidden');
+        }
+        
+        // Helper functions
+        function generateBookingCode() {
+            const timestamp = new Date().getTime().toString();
+            const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+            return 'BK' + timestamp.substring(timestamp.length - 6) + random;
+        }
+        
+        function estimateServiceTime(registrationTime) {
+            if (!registrationTime) {
+                return new Date().toTimeString().substring(0, 5);
+            }
+            
+            // Assume the registration time is in HH:mm format
+            return registrationTime.substring(0, 5);
+        }
+        
+        function formatJson(jsonString) {
+            try {
+                const parsed = JSON.parse(jsonString);
+                return JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                return jsonString;
+            }
+        }
+        
+        function formatDatetimeForInput(datetimeStr) {
+            if (!datetimeStr) return '';
+            
+            try {
+                // Check if the string is in MySQL datetime format (YYYY-MM-DD HH:mm:ss)
+                if (datetimeStr.includes(' ')) {
+                    const [date, time] = datetimeStr.split(' ');
+                    return `${date}T${time.substring(0, 5)}`;
+                }
+                
+                // If it's already in ISO format or similar
+                const date = new Date(datetimeStr);
+                return date.toISOString().slice(0, 16);
+            } catch (e) {
+                console.error('Error formatting datetime:', e);
+                return '';
+            }
+        }
+        
+        function formatInputForDatetime(inputValue) {
+            if (!inputValue) return '';
+            
+            try {
+                // Convert from HTML datetime-local input format (YYYY-MM-DDTHH:mm)
+                // to MySQL format (YYYY-MM-DD HH:mm:ss)
+                return inputValue.replace('T', ' ') + ':00';
+            } catch (e) {
+                console.error('Error formatting input datetime:', e);
+                return '';
+            }
+        }
     </script>
 
     <!-- BPJS Log Modal -->
@@ -522,6 +1182,34 @@
             <div class="flex justify-end mt-4">
                 <button onclick="closeLogModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition duration-200">
                     Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task ID Modal -->
+    <div id="taskIdModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="taskIdModalTitle" class="text-lg font-medium text-gray-900">Send Task ID</h3>
+                <button onclick="closeTaskIdModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div id="taskIdModalContent" class="max-h-96 overflow-y-auto">
+                <!-- Content will be loaded here -->
+                <div class="flex justify-center">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+            </div>
+
+            <div class="flex justify-end mt-4 space-x-2">
+                <button id="taskIdSendButton" onclick="sendTaskId()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition duration-200">
+                    Send Task ID
+                </button>
+                <button onclick="closeTaskIdModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition duration-200">
+                    Cancel
                 </button>
             </div>
         </div>

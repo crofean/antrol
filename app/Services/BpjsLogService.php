@@ -132,4 +132,49 @@ class BpjsLogService
             ->orderBy('created_at', 'desc')
             ->first();
     }
+
+    /**
+     * Get task ID related logs (for updatewaktu API calls)
+     * 
+     * @param int $limit Number of records to retrieve
+     * @param int $page Page number
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     */
+    public function getTaskIdLogs(int $limit = 50, int $page = 1)
+    {
+        return BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
+            ->orderBy('created_at', 'desc')
+            ->paginate($limit, ['*'], 'page', $page);
+    }
+
+    /**
+     * Filter task ID logs by date range
+     * 
+     * @param string $startDate
+     * @param string $endDate
+     * @param int $limit Number of records to retrieve
+     * @param int $page Page number
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     */
+    public function filterTaskIdLogs(string $startDate, string $endDate, int $limit = 50, int $page = 1)
+    {
+        return BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->orderBy('created_at', 'desc')
+            ->paginate($limit, ['*'], 'page', $page);
+    }
+
+    /**
+     * Get antrean add logs (for adding antrean)
+     * 
+     * @param int $limit Number of records to retrieve
+     * @param int $page Page number
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     */
+    public function getAntreanAddLogs(int $limit = 50, int $page = 1)
+    {
+        return BpjsWsRsLog::where('url', 'like', '%/antrean/add%')
+            ->orderBy('created_at', 'desc')
+            ->paginate($limit, ['*'], 'page', $page);
+    }
 }
