@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use App\Models\ReferensiMobilejknBpjsTaskid;
+use Throwable;
 
 class MobileJknService
 {
@@ -109,15 +110,14 @@ class MobileJknService
      */
     protected function getTask4Timestamp(string $kodebooking): ?string
     {
-        $pemeriksaan = PemeriksaanRalan::whereHas('regPeriksa.referensiMobilejknBpjs', function($query) use ($kodebooking) {
-            $query->where('nobooking', $kodebooking);
-        })
+        $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('petugas') // nip exists in petugas table
         ->orderBy('jam_rawat', 'desc')
         ->first();
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-            return (string) ($pemeriksaan->jam_rawat->timestamp * 1000);
+            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -128,15 +128,14 @@ class MobileJknService
      */
     protected function getTask5Timestamp(string $kodebooking): ?string
     {
-        $pemeriksaan = PemeriksaanRalan::whereHas('regPeriksa.referensiMobilejknBpjs', function($query) use ($kodebooking) {
-            $query->where('nobooking', $kodebooking);
-        })
+        $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('dokter') // nip exists in dokter table
         ->orderBy('jam_rawat', 'desc')
         ->first();
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-            return (string) ($pemeriksaan->jam_rawat->timestamp * 1000);
+            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -147,14 +146,13 @@ class MobileJknService
      */
     protected function getTask6Timestamp(string $kodebooking): ?string
     {
-        $resep = ResepObat::whereHas('regPeriksa.referensiMobilejknBpjs', function($query) use ($kodebooking) {
-            $query->where('nobooking', $kodebooking);
-        })
+        $resep = ResepObat::where('tgl_perawatan', $kodebooking)
         ->orderBy('jam', 'desc')
         ->first();
 
         if ($resep && $resep->jam) {
-            return (string) ($resep->jam->timestamp * 1000);
+            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $resep->tgl_perawatan) . ' ' . $resep->jam->toTimeString());
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -165,14 +163,13 @@ class MobileJknService
      */
     protected function getTask7Timestamp(string $kodebooking): ?string
     {
-        $resep = ResepObat::whereHas('regPeriksa.referensiMobilejknBpjs', function($query) use ($kodebooking) {
-            $query->where('nobooking', $kodebooking);
-        })
+        $resep = ResepObat::where('no_rawat', $kodebooking)
         ->orderBy('jam_penyerahan', 'desc')
         ->first();
 
         if ($resep && $resep->jam_penyerahan) {
-            return (string) ($resep->jam_penyerahan->timestamp * 1000);
+            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $resep->tgl_penyerahan) . ' ' . $resep->jam_penyerahan->toTimeString());
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -262,7 +259,7 @@ class MobileJknService
                     ]);
 
                     $taskRecord->save();
-                } catch (\Throwable $e) {
+                } catch (Throwable $e) {
                     Log::error('Failed to save ReferensiMobilejknBpjsTaskid', ['error' => $e->getMessage(), 'kodebooking' => $kodebooking, 'taskid' => $taskid]);
                 }
             }
@@ -426,7 +423,7 @@ class MobileJknService
                 'metadata' => $responseData['metadata'] ?? null
             ];
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // Log error to BPJS log database
             $this->bpjsLogService->logRequest(
                 500,
@@ -473,27 +470,27 @@ class MobileJknService
             
             if (!$regPeriksa) {
                 Log::error('Registration not found: ' . $regNo);
-                return null;
+                // return null;
             }
             
             // Get doctor information
-            $dokter = Dokter::find($regPeriksa->kd_dokter);
-            
+            $dokter = PemeriksaanRalan::where('no_rawat', $regNo)->where('nip', $regPeriksa->kd_dokter)->first();
+
             // Get referral data from BPJS
             $referral = ReferensiMobilejknBpjs::where('no_rawat', $regNo)->first();
             
             if (!$referral) {
                 Log::error('BPJS referral not found for: ' . $regNo);
-                return null;
+                // return null;
             }
             
             // Get examination data
-            $pemeriksaan = PemeriksaanRalan::where('no_rawat', $regNo)->first();
-            
+            $pemeriksaan = PemeriksaanRalan::where('no_rawat', $regNo)->join('petugas', 'petugas.nip', '=', 'pemeriksaan_ralan.nip')->first();
+
             // Get prescription data
             $resepObat = ResepObat::where('no_rawat', $regNo)->first();
-           
-            $kode = $referral->kodebooking ? $referral->kodebooking : $regPeriksa->no_rawat;
+
+            $kode = $referral != null ? $referral->nobooking : $regPeriksa->no_rawat;
 
             return [
                 'registration' => $regPeriksa,
@@ -511,8 +508,42 @@ class MobileJknService
                 'kodebooking' => $kode
             ];
             
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error('Error retrieving patient data for task ID: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Get saved task ID record from referensi_mobilejkn_bpjs_taskid by no_rawat and taskid
+     *
+     * @param string $noRawat
+     * @param int $taskid
+     * @return array|null
+     */
+    public function getTaskIdRecord(string $noRawat, int $taskid = null): ?array
+    {
+        try {
+            $record = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat);
+
+            if ($taskid !== null) {
+                $record = $record->where('taskid', $taskid)->first();
+            } else {
+                $record = $record->get();
+            }
+
+            if (!$record) {
+                return null;
+            }
+
+            // Return array representation; waktu will be cast to ISO string by model casting
+            return $record->toArray();
+        } catch (Throwable $e) {
+            Log::error('Error fetching ReferensiMobilejknBpjsTaskid', [
+                'no_rawat' => $noRawat,
+                'taskid' => $taskid,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }

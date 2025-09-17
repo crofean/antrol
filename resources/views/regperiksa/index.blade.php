@@ -568,55 +568,89 @@
             };
             
             // If kodeBooking is empty and taskId is 3, we need to add antrean first
-            if ((!kodeBooking || kodeBooking === '') && taskId === 3) {
-                fetchAddAntreanData(noRawat);
+            if ((!kodeBooking || kodeBooking === '')) {
+                fetchAddAntreanData(noRawat, taskId);
                 return;
             }
-            
-            // For each task ID, get the appropriate data
-            switch(taskId) {
-                case 3: // Pasien datang
-                    fetchPatientData(noRawat);
-                    break;
-                case 4: // Mulai layanan perawat/poli
-                    fetchNursingData(noRawat);
-                    break;
-                case 5: // Mulai layanan dokter
-                    fetchDoctorData(noRawat);
-                    break;
-                case 6: // Selesai layanan dokter
-                    fetchDoctorEndData(noRawat);
-                    break;
-                case 7: // Selesai layanan obat
-                    fetchMedicationData(noRawat);
-                    break;
-                case 99: // Batal
-                    displayCancelTaskData();
-                    break;
-                default:
-                    displayGenericTaskData(taskId);
-            }
         }
-        
-        function fetchAddAntreanData(noRawat) {
+
+        function fetchAddAntreanData(noRawat, taskId) {
             fetch(`/api/regperiksa/patient?no_rawat=${noRawat}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success && data.data) {
                         const patient = data.data;
+                        const task = data.task;
+                        const taskList = data.task_list || [];
 
                         // If BPJS bridging SEP exists, treat as already-registered in BPJS
-                        if (patient.bridging_sep != null) {
+                        if (taskList.find(t => t.taskid == "3") == undefined && patient.bridging_sep) {
                             // Build Task ID 3 payload using patient fields from the response
                             taskIdPayload = {
                                 kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
                                 taskid: 3,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
-                                waktu: patient.jam_reg || (patient.tgl_registrasi ? (patient.tgl_registrasi.split('T')[0] + ' ' + (patient.jam_reg || '00:00:00')) : new Date().toISOString().slice(0, 19).replace('T', ' '))
+                                waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
                             };
 
                             // Display the Task ID form (Pasien datang) pre-filled with SEP data
                             displayTaskIdForm(3, "Pasien check-in / kedatangan", taskIdPayload, patient);
+                            return;
+                        }
+
+                        if (taskList.find(t => t.taskid == "3") && taskList.find(t => t.taskid == "4") == undefined) {
+                            // If Task ID 3 already exists, fetch patient data for Task ID 4
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 4,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: task?.examination?.tgl_perawatan + ' ' + task?.examination?.jam_rawat
+                            };
+
+                            // Display the Task ID form (Patient going to nurstation) pre-filled with SEP data
+                            displayTaskIdForm(4, "Patient going to nurstation", taskIdPayload, patient);
+                            return;
+                        }
+
+                        if (taskList.find(t => t.taskid == "4") && taskList.find(t => t.taskid == "5") == undefined) {
+                            // If Task ID 4 already exists, fetch patient data for Task ID 5
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 5,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: task?.doctor?.tgl_perawatan + ' ' + task?.doctor?.jam_rawat
+                            };
+
+                            // Display the Task ID form (Patient going to doctor) pre-filled with SEP data
+                            displayTaskIdForm(5, "Patient going to doctor", taskIdPayload, patient);
+                            return;
+                        }
+
+                        if (taskList.find(t => t.taskid == "5") && taskList.find(t => t.taskid == "6") == undefined) {
+                            // If Task ID 5 already exists, fetch patient data for Task ID 6
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 6,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: task?.prescription?.tgl_perawatan + ' ' + task?.prescription?.jam
+                            };
+
+                            // Display the Task ID form (Patient finished with doctor) pre-filled with SEP data
+                            displayTaskIdForm(6, "Patient finished with doctor", taskIdPayload, patient);
+                            return;
+                        }
+
+                        if (taskList.find(t => t.taskid == "6") && taskList.find(t => t.taskid == "7") == undefined) {
+                            // If Task ID 6 already exists, fetch patient data for Task ID 7
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 7,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: task?.prescription?.tgl_penyerahan + ' ' + task?.prescription?.jam_penyerahan
+                            };
+
+                            // Display the Task ID form (Patient completed all services) pre-filled with SEP data
+                            displayTaskIdForm(7, "Patient completed all services", taskIdPayload, patient);
                             return;
                         }
 

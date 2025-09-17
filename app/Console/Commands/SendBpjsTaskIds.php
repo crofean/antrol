@@ -131,18 +131,18 @@ class SendBpjsTaskIds extends Command
         $this->line("Processing patient: {$patient->no_rawat} (Booking: {$kodebooking})");
 
         if (!$this->option('dry-run')) {
-            $antreanResult = app(MobileJknService::class)->addAntrean($patientData);
+            // $antreanResult = app(MobileJknService::class)->addAntrean($patientData);
 
-            if ($antreanResult['success']) {
-                $stats['antrean_success']++;
-                $this->line("Antrean added successfully for: {$kodebooking}");
+            // if ($antreanResult['success']) {
+            //     $stats['antrean_success']++;
+            //     $this->line("Antrean added successfully for: {$kodebooking}");
 
                 // Send task IDs
                 $this->sendTaskIds($kodebooking, $stats);
-            } else {
-                $stats['antrean_failed']++;
-                $this->line("Failed to add antrean for: {$kodebooking} - " . ($antreanResult['error'] ?? 'Unknown error'));
-            }
+            // } else {
+            //     $stats['antrean_failed']++;
+            //     $this->line("Failed to add antrean for: {$kodebooking} - " . ($antreanResult['error'] ?? 'Unknown error'));
+            // }
         } else {
             $this->line("DRY RUN: Would add antrean for: {$kodebooking}");
             $this->sendTaskIds($kodebooking, $stats, true);
