@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\MapingDokterDpjpvclaim;
+use App\Models\MapingPoliBpjs;
 use App\Models\ReferensiMobilejknBpjs;
 use App\Models\RegPeriksa;
 use App\Models\PemeriksaanRalan;
@@ -69,6 +71,8 @@ class MobileJknService
                     return $this->getTask6Timestamp($kodebooking);
                 case 7:
                     return $this->getTask7Timestamp($kodebooking);
+                case 99:
+                    return (string) now()->timestamp * 1000; // Current time in milliseconds
                 default:
                     return null;
             }
@@ -264,6 +268,21 @@ class MobileJknService
                 }
             }
 
+            $deleteTaskId = $taskid-1;
+            if (is_string($metaMessage) && strpos($metaMessage, "TaskId={$deleteTaskId} belum ada") !== false) {
+                ReferensiMobilejknBpjsTaskid::where('no_rawat', $kodebooking)
+                    ->where('taskid', $deleteTaskId)
+                    ->delete();
+
+                return [
+                    'success' => true,
+                    'message' => "TaskId {$taskid} belum ada. Hapus secara lokal.",
+                    'status_code' => $response->status(),
+                    'data' => $responseData,
+                    'metadata' => $responseData['metadata'] ?? null
+                ];
+            }
+
             return [
                 'success' => $response->successful(),
                 'status_code' => $response->status(),
@@ -355,6 +374,10 @@ class MobileJknService
             $timestamp = $this->getUtcTimestamp();
             $signature = $this->generateSignature($timestamp);
 
+            $poliBpjs = MapingPoliBpjs::where('kd_poli', $patientData['kodepoli'])->first();
+            $doctorBpjs = MapingDokterDpjpvclaim::where('kd_dokter', $patientData['kodedokter'])->first();
+
+
             // Prepare request data based on the Java code structure
             $requestData = [
                 'kodebooking' => $patientData['nobooking'],
@@ -362,13 +385,13 @@ class MobileJknService
                 'nomorkartu' => $patientData['nomorkartu'],
                 'nik' => $patientData['nik'],
                 'nohp' => $patientData['nohp'],
-                'kodepoli' => $patientData['kodepoli'],
-                'namapoli' => $patientData['nm_poli'],
+                'kodepoli' => $poliBpjs ? $poliBpjs->kd_poli_bpjs : $patientData['kodepoli'],
+                'namapoli' => $poliBpjs ? $poliBpjs->nm_poli_bpjs : $patientData['nm_poli'],
                 'pasienbaru' => (int) $patientData['pasienbaru'],
                 'norm' => $patientData['no_rkm_medis'],
                 'tanggalperiksa' => $patientData['tanggalperiksa'],
-                'kodedokter' => (int) $patientData['kodedokter'],
-                'namadokter' => $patientData['nm_dokter'],
+                'kodedokter' => (int) $doctorBpjs->kd_dokter_bpjs,
+                'namadokter' => $doctorBpjs->nm_dokter_bpjs,
                 'jampraktek' => $patientData['jampraktek'],
                 'jeniskunjungan' => (int) substr($patientData['jeniskunjungan'], 0, 1),
                 'nomorreferensi' => $patientData['nomorreferensi'],

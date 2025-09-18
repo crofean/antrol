@@ -156,7 +156,8 @@ class RegPeriksaService
      */
     public function getPatientsWithFilters(array $filters = [], int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $query = RegPeriksa::with(['referensiMobilejknBpjs', 'bridgingSep', 'referensiMobilejknBpjsTaskid', 'pasien', 'dokter', 'poliklinik', 'penjab']);
+        $query = RegPeriksa::with(['referensiMobilejknBpjs', 'bridgingSep', 'referensiMobilejknBpjsTaskid', 'pasien', 'dokter', 'poliklinik', 'penjab'])
+                ->whereNotIn('kd_poli', ['IGDK', 'IGDP', 'IGD']);
 
         // Apply date filter
         if (isset($filters['date'])) {
@@ -209,7 +210,7 @@ class RegPeriksaService
 
         return $query->orderBy('tgl_registrasi', 'desc')
                     ->orderBy('jam_reg', 'asc')
-                    ->paginate($perPage);
+                    ->paginate($perPage)->withQueryString();
     }
 
     /**

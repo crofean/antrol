@@ -230,7 +230,7 @@
                                                         </button>
                                                     </div>
                                                 @endforeach
-                                                <button onclick="showTaskIdModal('{{ $patient->no_rawat }}', '{{ $patient->referensiMobilejknBpjs->kodebooking ?? '' }}', {{ $patient->referensiMobilejknBpjsTaskid->max('taskid') }})"
+                                                <button onclick="showTaskIdModal('{{ $patient->no_rawat }}', '{{ $patient->referensiMobilejknBpjs->nobooking ?? '' }}', {{ $patient->referensiMobilejknBpjsTaskid->max('taskid') }})"
                                                         class="mt-2 text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition duration-200 flex items-center justify-center"
                                                         title="Send Next Task ID">
                                                     <i class="fas fa-paper-plane mr-1"></i> Send Next Task ID
@@ -260,7 +260,8 @@
                                         
                                     </td> --}}
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {{ $patient->poliklinik->nm_poli ?? 'N/A' }} <br> {{ $patient->dokter->nm_dokter ?? 'N/A' }}
+                                        {{ $patient->poliklinik->nm_poli ?? 'N/A' }} <br> {{ $patient->dokter->nm_dokter ?? 'N/A' }} <br>
+                                        {{ $patient->referensiMobilejknBpjs ? 'MJKN' : 'ONSITE' }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         @if($patient->stts == 'Belum')
@@ -568,10 +569,10 @@
             };
             
             // If kodeBooking is empty and taskId is 3, we need to add antrean first
-            if ((!kodeBooking || kodeBooking === '')) {
+            // if ((!kodeBooking || kodeBooking === '')) {
                 fetchAddAntreanData(noRawat, taskId);
                 return;
-            }
+            // }
         }
 
         function fetchAddAntreanData(noRawat, taskId) {
@@ -582,6 +583,19 @@
                         const patient = data.data;
                         const task = data.task;
                         const taskList = data.task_list || [];
+
+                        if (patient.stts == 'Batal') {
+                            taskIdPayload = {
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                taskid: 99,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
+                            };
+
+                            // Display the Task ID form (Pasien batal) pre-filled with SEP data
+                            displayTaskIdForm(99, "Pasien batal", taskIdPayload, patient);
+                            return;
+                        }
 
                         // If BPJS bridging SEP exists, treat as already-registered in BPJS
                         if (taskList.find(t => t.taskid == "3") == undefined && patient.bridging_sep) {
@@ -601,7 +615,7 @@
                         if (taskList.find(t => t.taskid == "3") && taskList.find(t => t.taskid == "4") == undefined) {
                             // If Task ID 3 already exists, fetch patient data for Task ID 4
                             taskIdPayload = {
-                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.nobooking) || patient.no_rawat,
                                 taskid: 4,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.examination?.tgl_perawatan + ' ' + task?.examination?.jam_rawat
@@ -615,7 +629,7 @@
                         if (taskList.find(t => t.taskid == "4") && taskList.find(t => t.taskid == "5") == undefined) {
                             // If Task ID 4 already exists, fetch patient data for Task ID 5
                             taskIdPayload = {
-                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.nobooking) || patient.no_rawat,
                                 taskid: 5,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.doctor?.tgl_perawatan + ' ' + task?.doctor?.jam_rawat
@@ -629,7 +643,7 @@
                         if (taskList.find(t => t.taskid == "5") && taskList.find(t => t.taskid == "6") == undefined) {
                             // If Task ID 5 already exists, fetch patient data for Task ID 6
                             taskIdPayload = {
-                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.nobooking) || patient.no_rawat,
                                 taskid: 6,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.prescription?.tgl_perawatan + ' ' + task?.prescription?.jam
@@ -643,7 +657,7 @@
                         if (taskList.find(t => t.taskid == "6") && taskList.find(t => t.taskid == "7") == undefined) {
                             // If Task ID 6 already exists, fetch patient data for Task ID 7
                             taskIdPayload = {
-                                kodebooking: (patient.bridging_sep && patient.bridging_sep.kodebooking) || patient.no_rawat,
+                                kodebooking: (patient.bridging_sep && patient.bridging_sep.nobooking) || patient.no_rawat,
                                 taskid: 7,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.prescription?.tgl_penyerahan + ' ' + task?.prescription?.jam_penyerahan
