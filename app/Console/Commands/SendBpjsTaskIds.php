@@ -62,10 +62,10 @@ class SendBpjsTaskIds extends Command
             'pasien'
         ])
         ->where('kd_pj', $kdPj)
-        ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo])
-        ->whereHas('referensiMobilejknBpjs', function($q) {
-            $q->whereNotNull('nobooking');
-        });
+        ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo]);
+        // ->whereHas('referensiMobilejknBpjs', function($q) {
+        //     $q->whereNotNull('nobooking');
+        // });
 
         // Exclude specific poli if configured
         if (!empty($excludePoliArray)) {
@@ -122,7 +122,7 @@ class SendBpjsTaskIds extends Command
             return;
         }
 
-        $kodebooking = $referensi->nobooking;
+        $kodebooking = $referensi ? $referensi->no_rawat : $patient->no_rawat;
 
         // Prepare patient data for antrean
         $patientData = $this->preparePatientData($patient, $referensi);
@@ -138,7 +138,7 @@ class SendBpjsTaskIds extends Command
             //     $this->line("Antrean added successfully for: {$kodebooking}");
 
                 // Send task IDs
-                $this->sendTaskIds($kodebooking, $stats);
+            $this->sendTaskIds($kodebooking, $stats);
             // } else {
             //     $stats['antrean_failed']++;
             //     $this->line("Failed to add antrean for: {$kodebooking} - " . ($antreanResult['error'] ?? 'Unknown error'));

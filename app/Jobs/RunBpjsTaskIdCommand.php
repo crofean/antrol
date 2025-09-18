@@ -63,43 +63,75 @@ class RunBpjsTaskIdCommand implements ShouldQueue
             $commandOptions['--dry-run'] = true;
         }
 
-        // Run the command
-        try {
-            // Use the buffer approach to capture output
-            $outputBuffer = new BufferedOutput;
-            $exitCode = Artisan::call('bpjs:send-task-ids', $commandOptions, $outputBuffer);
-            $output = $outputBuffer->fetch();
-            
-            // Log the output for debugging
-            Log::info('BPJS Task Command Output', [
-                'job_id' => $this->jobId,
-                'output_length' => strlen($output),
-                'exit_code' => $exitCode
-            ]);
-            
-            // Store output in cache
-            $currentOutput = Cache::get('command-output:' . $this->jobId);
-            $currentOutput['output'][] = $output;
-            Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
-            
-            $currentOutput['status'] = 'completed';
-            $currentOutput['completed_at'] = now()->toIso8601String();
-            $currentOutput['exit_code'] = $exitCode;
-            Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
-        } catch (\Exception $e) {
-            // Log the error with full stack trace
-            Log::error('Error running BPJS task command', [
-                'job_id' => $this->jobId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            $currentOutput = Cache::get('command-output:' . $this->jobId);
-            $currentOutput['status'] = 'failed';
-            $currentOutput['error'] = $e->getMessage();
-            $currentOutput['error_trace'] = $e->getTraceAsString();
-            $currentOutput['completed_at'] = now()->toIso8601String();
-            Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
+        // Run the command with retry logic
+        $maxAttempts = (int) env('BPJS_TASK_RETRY_MAX', 5);
+        $retryInterval = (int) env('BPJS_TASK_RETRY_INTERVAL', 10); // seconds
+        $attempt = 0;
+        $success = false;
+        $combinedOutput = '';
+
+        while (!$success && $attempt < $maxAttempts) {
+            $attempt++;
+            try {
+                $outputBuffer = new BufferedOutput;
+                $exitCode = Artisan::call('bpjs:send-task-ids', $commandOptions, $outputBuffer);
+                $output = $outputBuffer->fetch();
+                $combinedOutput .= "\n--- Attempt {$attempt} ---\n" . $output;
+
+                Log::info('BPJS Task Command Attempt', [
+                    'job_id' => $this->jobId,
+                    'attempt' => $attempt,
+                    'exit_code' => $exitCode,
+                    'output_length' => strlen($output)
+                ]);
+
+                // Store incremental output in cache
+                $currentOutput = Cache::get('command-output:' . $this->jobId, ['output' => []]);
+                $currentOutput['output'][] = "Attempt {$attempt}: " . $output;
+                $currentOutput['attempts'] = $attempt;
+                $currentOutput['status'] = $exitCode === 0 ? 'completed' : 'retrying';
+                Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
+
+                if ($exitCode === 0) {
+                    $success = true;
+                    $currentOutput['status'] = 'completed';
+                    $currentOutput['completed_at'] = now()->toIso8601String();
+                    $currentOutput['exit_code'] = $exitCode;
+                    Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
+                    break;
+                }
+
+                // If not successful and we have more attempts, wait then retry
+                if ($attempt < $maxAttempts) {
+                    sleep($retryInterval);
+                }
+            } catch (\Exception $e) {
+                Log::error('Error running BPJS task command (attempt '.$attempt.')', [
+                    'job_id' => $this->jobId,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+
+                $currentOutput = Cache::get('command-output:' . $this->jobId, ['output' => []]);
+                $currentOutput['output'][] = "Attempt {$attempt} Exception: " . $e->getMessage();
+                $currentOutput['attempts'] = $attempt;
+                $currentOutput['status'] = 'retrying';
+                Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
+
+                if ($attempt < $maxAttempts) {
+                    sleep($retryInterval);
+                }
+            }
+        }
+
+        if (!$success) {
+            $finalOutput = Cache::get('command-output:' . $this->jobId, ['output' => []]);
+            $finalOutput['status'] = 'failed';
+            $finalOutput['completed_at'] = now()->toIso8601String();
+            $finalOutput['exit_code'] = $exitCode ?? 1;
+            Cache::put('command-output:' . $this->jobId, $finalOutput, 3600);
+
+            Log::error('BPJS Task Command failed after retries', ['job_id' => $this->jobId, 'attempts' => $attempt]);
         }
     }
 
