@@ -287,4 +287,26 @@ class MobileJknController extends Controller
     {
         return view('mobilejkn.patient-data');
     }
+    
+    /**
+     * Send antrean by no_rawat
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function sendAntrian(Request $request): JsonResponse
+    {
+        $noRawat = $request->input('no_rawat');
+        if (!$noRawat) {
+            return response()->json(['status' => false, 'message' => 'no_rawat is required', 'data' => [], 'payload' => null]);
+        }
+
+        try {
+            $service = app(\App\Services\MobileJknService::class);
+            $result = $service->sendAddAntreanByNoRawat($noRawat);
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => false, 'message' => $e->getMessage(), 'data' => [], 'payload' => null], 500);
+        }
+    }
 }

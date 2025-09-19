@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use App\Models\ReferensiMobilejknBpjsTaskid;
 use Throwable;
+use App\Models\Jadwal;
+use App\Models\Pasien;
 
 class MobileJknService
 {
@@ -258,7 +260,7 @@ class MobileJknService
                 try {
                     $taskRecord = ReferensiMobilejknBpjsTaskid::firstOrNew([
                         'no_rawat' => $kodebooking,
-                        'taskid' => $taskid,
+                        'taskid' => (string) $taskid,
                         'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->toDateTimeString()
                     ]);
 
@@ -568,6 +570,347 @@ class MobileJknService
                 'error' => $e->getMessage()
             ]);
             return null;
+        }
+    }
+
+    /**
+     * Wrapper to call sendAddAntreanByNoRawat (public API)
+     */
+    public function sendAddAntreanByNoRawat(string $noRawat): array
+    {
+        return $this->sendAddAntreanByNoRawatInternal($noRawat);
+    }
+
+    /**
+     * Internal implementation (kept separate to avoid duplicate name issues)
+     */
+    protected function sendAddAntreanByNoRawatInternal(string $noRawat): array
+    {
+        try {
+            $reg = RegPeriksa::where('no_rawat', $noRawat)->first();
+            if (!$reg) {
+                return [
+                    'status' => false,
+                    'message' => 'Registration not found',
+                    'data' => [],
+                    'payload' => null,
+                    'bpjs' => null
+                ];
+            }
+
+            $pasien = Pasien::where('no_rkm_medis', $reg->no_rkm_medis)->first();
+
+            $mapPoli = MapingPoliBpjs::where('kd_poli_rs', $reg->kd_poli)->first();
+            $mapDok = MapingDokterDpjpvclaim::where('kd_dokter', $reg->kd_dokter)->first();
+
+            $jadwal = Jadwal::where('kd_dokter', $reg->kd_dokter)
+                ->where('kd_poli', $reg->kd_poli)
+                ->orderBy('jam_mulai')
+                ->first();
+
+            $kodepoli = $mapPoli ? $mapPoli->kd_poli_bpjs : $reg->kd_poli;
+            $namapoli = $reg->poliklinik->nm_poli ?? ($mapPoli->nm_poli_bpjs ?? null);
+            $kodedokter = $mapDok ? $mapDok->kd_dokter_bpjs : $reg->kd_dokter;
+            $namadokter = $mapDok ? ($mapDok->nm_dokter_bpjs ?? $reg->dokter->nm_dokter ?? null) : ($reg->dokter->nm_dokter ?? null);
+
+            if ($jadwal) {
+                $jamMulai = substr($jadwal->jam_mulai ?? '00:00:00', 0, 5);
+                $jamSelesai = substr($jadwal->jam_selesai ?? $jadwal->jam_mulai ?? '00:00:00', 0, 5);
+                $jampraktek = $jamMulai . '-' . $jamSelesai;
+            } else {
+                $jampraktek = '08:00-16:00';
+            }
+
+            $noRegInt = intval($reg->no_reg);
+            $baseDatetime = Carbon::parse($reg->tgl_registrasi . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
+            $estimasidilayani = $baseDatetime->copy()->addMinutes($noRegInt * 2);
+
+            $pasienbaru = 0;
+            if (stripos($reg->stts_daftar ?? '', 'Baru') !== false) {
+                $pasienbaru = 1;
+            }
+
+            $jenisKunjungan = 1;
+            $nomorreferensi = $this->fetchRujukan($pasien->no_peserta ?? '', $kodepoli);
+            if (empty($nomorreferensi)) {
+                $jenisKunjungan = 4; // Rujukan RS
+                $nomorreferensi = $this->fetchRujukanRS($pasien->no_peserta ?? '', $kodepoli);
+            }
+
+            if (empty($nomorreferensi)) {
+                $jenisKunjungan = 3; // Kontrol
+                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, date('m', $reg->tgl_registrasi), date('Y'));
+            }
+
+            $angkaAntrean = str_pad((string) intval($reg->no_reg), 3, '0', STR_PAD_LEFT);
+            $nomorAntrean = ($kodepoli ? $kodepoli : $reg->kd_poli) . '-' . $angkaAntrean;
+
+            $payload = [
+                'kodebooking' => $reg->no_rawat,
+                'jenispasien' => 'JKN',
+                'nomorkartu' => $pasien->no_peserta ?? '',
+                'nik' => $pasien->no_ktp ?? '',
+                'nohp' => $pasien->no_tlp ?? '00000000',
+                'norm' => $reg->no_rkm_medis,
+                'kodepoli' => $kodepoli,
+                'namapoli' => $namapoli,
+                'pasienbaru' => $pasienbaru,
+                'tanggalperiksa' => $reg->tgl_registrasi,
+                'kodedokter' => $kodedokter,
+                'namadokter' => $namadokter,
+                'jampraktek' => $jampraktek,
+                'jeniskunjungan' => $jenisKunjungan,
+                'nomorreferensi' => $nomorreferensi ?: '-',
+                'nomorantrean' => $nomorAntrean,
+                'angkaantrean' => $angkaAntrean,
+                'estimasidilayani' => (int) ($estimasidilayani->timestamp * 1000),
+                'sisakuotajkn' => $jadwal ? max(0, intval($jadwal->kuota) - intval($reg->no_reg)) : 0,
+                'kuotajkn' => $jadwal ? intval($jadwal->kuota) : 0,
+                'sisakuotanonjkn' => $jadwal ? max(0, intval($jadwal->kuota) - intval($reg->no_reg)) : 0,
+                'kuotanonjkn' => $jadwal ? intval($jadwal->kuota) : 0,
+                'keterangan' => 'Peserta harap 30 menit lebih awal guna pencatatan administrasi.'
+            ];
+
+            $resp = $this->addAntrean($payload);
+
+            $status = $resp['success'] ?? false;
+            $message = $status ? ($resp['metadata']['message'] ?? 'Antrean sent') : ($resp['metadata']['message'] ?? 'Mohon Maaf Gagal Mengirim Antrean, Silahkan Coba Lagi!');
+
+            return [
+                'status' => $status,
+                'message' => $message,
+                'data' => [],
+                'payload' => $payload,
+                'bpjs' => [
+                    'metadata' => $resp['metadata'] ?? null,
+                    'data' => $resp['data'] ?? null
+                ]
+            ];
+
+        } catch (Throwable $e) {
+            Log::error('Error in sendAddAntreanByNoRawat: ' . $e->getMessage());
+            return [
+                'status' => false,
+                'message' => $e->getMessage(),
+                'data' => [],
+                'payload' => null,
+                'bpjs' => null
+            ];
+        }
+    }
+
+    /**
+     * Placeholder: fetch referral by participant and poli (implement BPJS lookup if available)
+     */
+    protected function fetchRujukan(string $noPeserta, string $kdPoliBpjs): string
+    {
+        $noRujukan = '';
+
+        try {
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            $url = rtrim($this->baseUrl, '/') . '/Rujukan/List/Peserta/' . $noPeserta;
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-cons-id' => $this->consId,
+                'x-timestamp' => $timestamp,
+                'x-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->get($url);
+
+            $responseData = $response->json();
+
+            // Log request/response to BPJS log
+            try {
+                $this->bpjsLogService->logRequest(
+                    $response->status(),
+                    json_encode([]),
+                    json_encode($responseData),
+                    $url,
+                    'GET'
+                );
+            } catch (Throwable $e) {
+                Log::error('Failed to log BPJS rujukan request', ['error' => $e->getMessage()]);
+            }
+
+            $meta = $responseData['metaData'] ?? $responseData['metadata'] ?? null;
+            $code = $meta['code'] ?? $meta['status'] ?? null;
+
+            if ($code === '200' || $code === 200) {
+                $rujukanList = null;
+
+                // Response may contain 'response' as an object/array or a JSON string
+                if (isset($responseData['response'])) {
+                    $respContent = $responseData['response'];
+
+                    if (is_string($respContent)) {
+                        $decoded = json_decode($respContent, true);
+                        if (is_array($decoded) && isset($decoded['rujukan'])) {
+                            $rujukanList = $decoded['rujukan'];
+                        }
+                    } elseif (is_array($respContent) && isset($respContent['rujukan'])) {
+                        $rujukanList = $respContent['rujukan'];
+                    }
+                }
+
+                if (is_array($rujukanList)) {
+                    foreach ($rujukanList as $item) {
+                        $kodePoli = $item['poliRujukan']['kode'] ?? ($item['poliRujukan']['kode'] ?? '');
+                        if ($kodePoli === $kdPoliBpjs) {
+                            $noRujukan = $item['noKunjungan'] ?? '';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return $noRujukan;
+        } catch (Throwable $e) {
+            Log::error('Error fetching BPJS rujukan', ['noPeserta' => $noPeserta, 'error' => $e->getMessage()]);
+            return $noRujukan;
+        }
+    }
+
+    /**
+     * Placeholder: fetch RS referral fallback
+     */
+    protected function fetchRujukanRS(string $noPeserta, string $kdPoliBpjs): string
+    {
+        $noRujukan = '';
+
+        try {
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            $url = rtrim($this->baseUrl, '/') . '/Rujukan/RS/List/Peserta/' . $noPeserta;
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-cons-id' => $this->consId,
+                'x-timestamp' => $timestamp,
+                'x-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->get($url);
+
+            $responseData = $response->json();
+
+            // Log request/response to BPJS log
+            try {
+                $this->bpjsLogService->logRequest(
+                    $response->status(),
+                    json_encode([]),
+                    json_encode($responseData),
+                    $url,
+                    'GET'
+                );
+            } catch (Throwable $e) {
+                Log::error('Failed to log BPJS rujukan RS request', ['error' => $e->getMessage()]);
+            }
+
+            $meta = $responseData['metaData'] ?? $responseData['metadata'] ?? null;
+            $code = $meta['code'] ?? $meta['status'] ?? null;
+
+            if ($code === '200' || $code === 200) {
+                $rujukanList = null;
+
+                if (isset($responseData['response'])) {
+                    $respContent = $responseData['response'];
+
+                    if (is_string($respContent)) {
+                        $decoded = json_decode($respContent, true);
+                        if (is_array($decoded) && isset($decoded['rujukan'])) {
+                            $rujukanList = $decoded['rujukan'];
+                        }
+                    } elseif (is_array($respContent) && isset($respContent['rujukan'])) {
+                        $rujukanList = $respContent['rujukan'];
+                    }
+                }
+
+                if (is_array($rujukanList)) {
+                    foreach ($rujukanList as $item) {
+                        $kodePoli = $item['poliRujukan']['kode'] ?? ($item['poliRujukan']['kode'] ?? '');
+                        if ($kodePoli === $kdPoliBpjs) {
+                            $noRujukan = $item['noKunjungan'] ?? '';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return $noRujukan;
+        } catch (Throwable $e) {
+            Log::error('Error fetching BPJS rujukan RS', ['noPeserta' => $noPeserta, 'error' => $e->getMessage()]);
+            return $noRujukan;
+        }
+
+        
+    }
+
+    /**
+     * Placeholder: fetch kontrol rujukan by peserta and poli
+     */
+    protected function fetchKontrol(string $noPeserta, string $kdPoliBpjs, ?string $bulan = null, ?string $tahun = null, int $filter = 2): string
+    {
+        $noSuratKontrol = '';
+
+        try {
+            // default to current month/year if not provided
+            $now = Carbon::now();
+            $bulan = $bulan ?: $now->format('m');
+            $tahun = $tahun ?: $now->format('Y');
+
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            $url = rtrim($this->baseUrl, '/') . "/RencanaKontrol/ListRencanaKontrol/Bulan/{$bulan}/Tahun/{$tahun}/Nokartu/{$noPeserta}/filter/{$filter}";
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-cons-id' => $this->consId,
+                'x-timestamp' => $timestamp,
+                'x-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->get($url);
+
+            $responseData = $response->json();
+
+            // Log request/response
+            try {
+                $this->bpjsLogService->logRequest(
+                    $response->status(),
+                    json_encode([]),
+                    json_encode($responseData),
+                    $url,
+                    'GET'
+                );
+            } catch (Throwable $e) {
+                Log::error('Failed to log BPJS kontrol request', ['error' => $e->getMessage()]);
+            }
+
+            $meta = $responseData['metaData'] ?? $responseData['metadata'] ?? null;
+            $code = $meta['code'] ?? $meta['status'] ?? null;
+
+            if ($code === '200' || $code === 200) {
+                $list = $responseData['response']['list'] ?? null;
+
+                if (is_array($list)) {
+                    foreach ($list as $item) {
+                        // match poli by kode (poliTujuan) or namaPoliTujuan if needed
+                        $poliTujuan = $item['poliTujuan'] ?? ($item['poliTujuan'] ?? '');
+                        if ($poliTujuan === $kdPoliBpjs) {
+                            $noSuratKontrol = $item['noSuratKontrol'] ?? '';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return $noSuratKontrol;
+        } catch (Throwable $e) {
+            Log::error('Error fetching BPJS rencana kontrol', ['noPeserta' => $noPeserta, 'error' => $e->getMessage()]);
+            return $noSuratKontrol;
         }
     }
 }

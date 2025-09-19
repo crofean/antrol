@@ -77,3 +77,4 @@ Route::prefix('api/command-output')->group(function () {
     Route::get('/by-task', [CommandOutputController::class, 'getOutputsByTask']);
 });
 Route::post('/api/mobilejkn/update-task-id', [MobileJknController::class, 'updateTaskId']);
+Route::post('/api/antrian', [App\Http\Controllers\MobileJknController::class, 'sendAntrian']);
