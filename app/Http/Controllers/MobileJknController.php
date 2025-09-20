@@ -227,31 +227,6 @@ class MobileJknController extends Controller
 
         return response()->json($logs);
     }
-
-    /**
-     * Add a new antrean (appointment) for a patient
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
-    public function addAntrean(Request $request): JsonResponse
-    {
-        $request->validate([
-            'payload' => 'required|array',
-        ]);
-
-        $payload = $request->payload;
-        
-        // Store registration number in the payload if provided
-        if ($request->has('no_rawat')) {
-            $payload['no_rawat'] = $request->no_rawat;
-        }
-
-        // Call the service method to add antrean
-        $result = $this->mobileJknService->addAntrean($payload);
-
-        return response()->json($result);
-    }
     
     /**
      * Get patient data needed for task ID updates
@@ -302,7 +277,7 @@ class MobileJknController extends Controller
         }
 
         try {
-            $service = app(\App\Services\MobileJknService::class);
+            $service = app(MobileJknService::class);
             $result = $service->sendAddAntreanByNoRawat($noRawat);
             return response()->json($result);
         } catch (\Throwable $e) {

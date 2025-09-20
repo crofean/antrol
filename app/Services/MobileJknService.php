@@ -372,94 +372,27 @@ class MobileJknService
     public function addAntrean(array $patientData): array
     {
         try {
-            // Generate timestamp and signature
-            $timestamp = $this->getUtcTimestamp();
-            $signature = $this->generateSignature($timestamp);
-
-            $poliBpjs = MapingPoliBpjs::where('kd_poli', $patientData['kodepoli'])->first();
-            $doctorBpjs = MapingDokterDpjpvclaim::where('kd_dokter', $patientData['kodedokter'])->first();
-
-
-            // Prepare request data based on the Java code structure
-            $requestData = [
-                'kodebooking' => $patientData['nobooking'],
-                'jenispasien' => 'JKN',
-                'nomorkartu' => $patientData['nomorkartu'],
-                'nik' => $patientData['nik'],
-                'nohp' => $patientData['nohp'],
-                'kodepoli' => $poliBpjs ? $poliBpjs->kd_poli_bpjs : $patientData['kodepoli'],
-                'namapoli' => $poliBpjs ? $poliBpjs->nm_poli_bpjs : $patientData['nm_poli'],
-                'pasienbaru' => (int) $patientData['pasienbaru'],
-                'norm' => $patientData['no_rkm_medis'],
-                'tanggalperiksa' => $patientData['tanggalperiksa'],
-                'kodedokter' => (int) $doctorBpjs->kd_dokter_bpjs,
-                'namadokter' => $doctorBpjs->nm_dokter_bpjs,
-                'jampraktek' => $patientData['jampraktek'],
-                'jeniskunjungan' => (int) substr($patientData['jeniskunjungan'], 0, 1),
-                'nomorreferensi' => $patientData['nomorreferensi'],
-                'nomorantrean' => $patientData['nomorantrean'],
-                'angkaantrean' => (int) $patientData['angkaantrean'],
-                'estimasidilayani' => (int) $patientData['estimasidilayani'],
-                'sisakuotajkn' => (int) $patientData['sisakuotajkn'],
-                'kuotajkn' => (int) $patientData['kuotajkn'],
-                'sisakuotanonjkn' => (int) $patientData['sisakuotanonjkn'],
-                'kuotanonjkn' => (int) $patientData['kuotanonjkn'],
-                'keterangan' => 'Peserta harap 30 menit lebih awal guna pencatatan administrasi.'
-            ];
-
-            // Log the request
-            Log::info('Mobile JKN Add Antrean Request', [
-                'kodebooking' => $patientData['nobooking'],
-                'timestamp' => $timestamp,
-                'request_data' => $requestData
-            ]);
-
-            // Make HTTP request
-            $response = Http::withHeaders([
-                'Content-Type' => 'application/json',
-                'x-cons-id' => $this->consId,
-                'x-timestamp' => $timestamp,
-                'x-signature' => $signature,
-                'user_key' => $this->userKey,
-            ])->post($this->baseUrl . '/antrean/add', $requestData);
-
-            // Parse response
-            $responseData = $response->json();
-
-            // Log to BPJS log database
-            $this->bpjsLogService->logRequest(
-                $response->status(),
-                json_encode($requestData),
-                json_encode($responseData),
-                $this->baseUrl . '/antrean/add',
-                'POST'
-            );
-
-            // Log the response
-            Log::info('Mobile JKN Add Antrean Response', [
-                'status' => $response->status(),
-                'response' => $responseData
-            ]);
-
+            // Extract the no_rawat/kodebooking from the payload
+            $noRawat = $patientData['nobooking'] ?? $patientData['kodebooking'] ?? null;
+            
+            if (empty($noRawat)) {
+                throw new InvalidArgumentException('No rawat/kodebooking is required');
+            }
+            
+            // Call sendAddAntreanByNoRawat instead of direct API call
+            $result = $this->sendAddAntreanByNoRawat($noRawat);
+            
+            // Map the response structure to match the original addAntrean format
             return [
-                'success' => $response->successful(),
-                'status_code' => $response->status(),
-                'data' => $responseData,
-                'metadata' => $responseData['metadata'] ?? null
+                'success' => $result['status'] ?? false,
+                'status_code' => $result['bpjs']['metadata']['code'] ?? 500,
+                'data' => $result['bpjs']['data'] ?? [],
+                'metadata' => $result['bpjs']['metadata'] ?? null
             ];
-
+            
         } catch (Exception $e) {
-            // Log error to BPJS log database
-            $this->bpjsLogService->logRequest(
-                500,
-                json_encode($requestData ?? []),
-                $e->getMessage(),
-                $this->baseUrl . '/antrean/add',
-                'POST'
-            );
-
             Log::error('Mobile JKN Add Antrean Error', [
-                'kodebooking' => $patientData['nobooking'] ?? 'unknown',
+                'kodebooking' => $patientData['nobooking'] ?? $patientData['kodebooking'] ?? 'unknown',
                 'error' => $e->getMessage()
             ]);
 
@@ -589,6 +522,13 @@ class MobileJknService
         try {
             $reg = RegPeriksa::where('no_rawat', $noRawat)->first();
             if (!$reg) {
+                $reg = ReferensiMobilejknBpjs::select('reg_periksa.*')
+                        ->where('no_rawat', $noRawat)
+                        ->join('reg_periksa', 'reg_periksa.no_rawat', '=', 'referensi_mobilejkn_bpjs.no_rawat')
+                        ->first();
+            }
+
+            if (!$reg) {
                 return [
                     'status' => false,
                     'message' => 'Registration not found',
@@ -639,7 +579,7 @@ class MobileJknService
 
             if (empty($nomorreferensi)) {
                 $jenisKunjungan = 3; // Kontrol
-                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, date('m', $reg->tgl_registrasi), date('Y'));
+                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, date('m', strtotime($reg->tgl_registrasi)), date('Y', strtotime($reg->tgl_registrasi)));
             }
 
             $angkaAntrean = str_pad((string) intval($reg->no_reg), 3, '0', STR_PAD_LEFT);
@@ -671,10 +611,46 @@ class MobileJknService
                 'keterangan' => 'Peserta harap 30 menit lebih awal guna pencatatan administrasi.'
             ];
 
-            $resp = $this->addAntrean($payload);
+            // Make the actual BPJS API call
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
 
-            $status = $resp['success'] ?? false;
-            $message = $status ? ($resp['metadata']['message'] ?? 'Antrean sent') : ($resp['metadata']['message'] ?? 'Mohon Maaf Gagal Mengirim Antrean, Silahkan Coba Lagi!');
+            // Log the request
+            Log::info('Mobile JKN Add Antrean Request', [
+                'kodebooking' => $payload['kodebooking'],
+                'timestamp' => $timestamp,
+                'request_data' => $payload
+            ]);
+
+            // Make HTTP request
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-cons-id' => $this->consId,
+                'x-timestamp' => $timestamp,
+                'x-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->post($this->baseUrl . '/antrean/add', $payload);
+
+            // Parse response
+            $responseData = $response->json();
+
+            // Log to BPJS log database
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode($payload),
+                json_encode($responseData),
+                $this->baseUrl . '/antrean/add',
+                'POST'
+            );
+
+            // Log the response
+            Log::info('Mobile JKN Add Antrean Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            $status = $response->successful();
+            $message = $status ? ($responseData['metadata']['message'] ?? 'Antrean sent') : ($responseData['metadata']['message'] ?? 'Mohon Maaf Gagal Mengirim Antrean, Silahkan Coba Lagi!');
 
             return [
                 'status' => $status,
@@ -682,8 +658,8 @@ class MobileJknService
                 'data' => [],
                 'payload' => $payload,
                 'bpjs' => [
-                    'metadata' => $resp['metadata'] ?? null,
-                    'data' => $resp['data'] ?? null
+                    'metadata' => $responseData['metadata'] ?? null,
+                    'data' => $responseData['data'] ?? null
                 ]
             ];
 
