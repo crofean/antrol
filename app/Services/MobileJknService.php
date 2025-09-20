@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\MapingDokterDpjpvclaim;
 use App\Models\MapingPoliBpjs;
 use App\Models\ReferensiMobilejknBpjs;
+use App\Models\ReferensiMobilejknBpjsBatal;
 use App\Models\RegPeriksa;
 use App\Models\PemeriksaanRalan;
 use App\Models\Petugas;
@@ -24,6 +25,7 @@ use App\Models\Pasien;
 class MobileJknService
 {
     protected $baseUrl;
+    protected $baseUrlVclaim = 'https://apijkn.bpjs-kesehatan.go.id/vclaim-rest';
     protected $consId;
     protected $userKey;
     protected $secretKey;    
@@ -37,6 +39,51 @@ class MobileJknService
         $this->userKey = config('mobilejkn.user_key');
         $this->secretKey = config('mobilejkn.secret_key');
         $this->bpjsLogService = $bpjsLogService;
+    }
+
+    /**
+     * Decrypt string using AES-256-CBC
+     * 
+     * @param string $key The key to use for decryption
+     * @param string $string The string to decrypt
+     * @return string Decrypted string
+     */
+    protected function stringDecrypt($key, $string)
+    {
+        $encrypt_method = 'AES-256-CBC';
+        
+        // hash
+        $key_hash = hex2bin(hash('sha256', $key));
+        
+        // iv - encrypt method AES-256-CBC expects 16 bytes - else you will get a warning
+        $iv = substr(hex2bin(hash('sha256', $key)), 0, 16);
+        
+        $output = openssl_decrypt(base64_decode($string), $encrypt_method, $key_hash, OPENSSL_RAW_DATA, $iv);
+        
+        return $output;
+    }
+    
+    /**
+     * Generate decryption key for BPJS responses
+     * 
+     * @param string $timestamp Timestamp from the request
+     * @return string Decryption key
+     */
+    protected function generateDecryptionKey(string $timestamp): string
+    {
+        // Key is consid + secretkey + timestamp
+        return $this->consId . $this->secretKey . $timestamp;
+    }
+
+    /**
+     * Decompress string using LZString library
+     * 
+     * @param string $string The string to decompress
+     * @return string Decompressed string
+     */
+    protected function decompress($string)
+    {
+        return \LZCompressor\LZString::decompressFromEncodedURIComponent($string);
     }
 
     /**
@@ -101,7 +148,7 @@ class MobileJknService
         }
 
         // If not found, get from reg_periksa jam_reg
-        $regPeriksa = RegPeriksa::where('no_rawat', $kodebooking)->first();
+        $regPeriksa = RegPeriksa::where('no_rawat', $referensi ? $referensi->no_rawat : $kodebooking)->first();
 
         if ($regPeriksa && $regPeriksa->jam_reg) {
             $waktuReg =  Carbon::parse(str_replace(' 00:00:00', '', $regPeriksa->tgl_registrasi) . ' ' . $regPeriksa->jam_reg->toTimeString());
@@ -116,9 +163,12 @@ class MobileJknService
      */
     protected function getTask4Timestamp(string $kodebooking): ?string
     {
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        if ($referensi) $kodebooking = $referensi->no_rawat;
+
         $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('petugas') // nip exists in petugas table
-        ->orderBy('jam_rawat', 'desc')
+        ->orderBy('jam_rawat', 'asc')
         ->first();
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
@@ -134,6 +184,9 @@ class MobileJknService
      */
     protected function getTask5Timestamp(string $kodebooking): ?string
     {
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        if ($referensi) $kodebooking = $referensi->no_rawat;
+
         $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('dokter') // nip exists in dokter table
         ->orderBy('jam_rawat', 'desc')
@@ -152,6 +205,9 @@ class MobileJknService
      */
     protected function getTask6Timestamp(string $kodebooking): ?string
     {
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        if ($referensi) $kodebooking = $referensi->no_rawat;
+
         $resep = ResepObat::where('tgl_perawatan', $kodebooking)
         ->orderBy('jam', 'desc')
         ->first();
@@ -169,6 +225,9 @@ class MobileJknService
      */
     protected function getTask7Timestamp(string $kodebooking): ?string
     {
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        if ($referensi) $kodebooking = $referensi->no_rawat;
+
         $resep = ResepObat::where('no_rawat', $kodebooking)
         ->orderBy('jam_penyerahan', 'desc')
         ->first();
@@ -227,6 +286,12 @@ class MobileJknService
                 'timestamp' => (int) $timestamp
             ]);
 
+            $batal = '';
+            if ($taskid == 99) {
+                $refBatal = ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
+                $batal = $this->batalAntrean($kodebooking, $refBatal ? $refBatal->keterangan : 'Batal.');
+            }
+
             // Make HTTP request
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
@@ -254,17 +319,24 @@ class MobileJknService
                 'response' => $responseData
             ]);
 
+            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+
             // If BPJS returns message indicating the TaskId already exists, persist it locally
             $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? null);
             if (is_string($metaMessage) && (strpos($metaMessage, "TaskId={$taskid} sudah ada") !== false || strpos($metaMessage, "Ok") !== false)) {
                 try {
-                    $taskRecord = ReferensiMobilejknBpjsTaskid::firstOrNew([
-                        'no_rawat' => $kodebooking,
-                        'taskid' => (string) $taskid,
-                        'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->toDateTimeString()
-                    ]);
+                    $cekRecord = ReferensiMobilejknBpjsTaskid::where('no_rawat', $referensi ? $referensi->no_rawat : $kodebooking)
+                        ->where('taskid', (string) $taskid)
+                        ->first();
+                    if (!$cekRecord) {
+                        $taskRecord = ReferensiMobilejknBpjsTaskid::firstOrNew([
+                            'no_rawat' => $referensi ? $referensi->no_rawat : $kodebooking,
+                            'taskid' => (string) $taskid,
+                            'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->toDateTimeString()
+                        ]);
 
-                    $taskRecord->save();
+                        $taskRecord->save();
+                    }
                 } catch (Throwable $e) {
                     Log::error('Failed to save ReferensiMobilejknBpjsTaskid', ['error' => $e->getMessage(), 'kodebooking' => $kodebooking, 'taskid' => $taskid]);
                 }
@@ -281,7 +353,8 @@ class MobileJknService
                     'message' => "TaskId {$taskid} belum ada. Hapus secara lokal.",
                     'status_code' => $response->status(),
                     'data' => $responseData,
-                    'metadata' => $responseData['metadata'] ?? null
+                    'metadata' => $responseData['metadata'] ?? null,
+                    'batal' => $batal
                 ];
             }
 
@@ -289,7 +362,8 @@ class MobileJknService
                 'success' => $response->successful(),
                 'status_code' => $response->status(),
                 'data' => $responseData,
-                'metadata' => $responseData['metadata'] ?? null
+                'metadata' => $responseData['metadata'] ?? null,
+                'batal' => $batal
             ];
 
         } catch (Exception $e) {
@@ -519,6 +593,7 @@ class MobileJknService
      */
     protected function sendAddAntreanByNoRawatInternal(string $noRawat): array
     {
+        $payload = [];
         try {
             $reg = RegPeriksa::where('no_rawat', $noRawat)->first();
             if (!$reg) {
@@ -553,6 +628,8 @@ class MobileJknService
             $kodedokter = $mapDok ? $mapDok->kd_dokter_bpjs : $reg->kd_dokter;
             $namadokter = $mapDok ? ($mapDok->nm_dokter_bpjs ?? $reg->dokter->nm_dokter ?? null) : ($reg->dokter->nm_dokter ?? null);
 
+            Log::info("Mapping Poli: {$reg->kd_poli} => {$kodepoli}, Dokter: {$reg->kd_dokter} => {$kodedokter}");
+
             if ($jadwal) {
                 $jamMulai = substr($jadwal->jam_mulai ?? '00:00:00', 0, 5);
                 $jamSelesai = substr($jadwal->jam_selesai ?? $jadwal->jam_mulai ?? '00:00:00', 0, 5);
@@ -562,7 +639,7 @@ class MobileJknService
             }
 
             $noRegInt = intval($reg->no_reg);
-            $baseDatetime = Carbon::parse($reg->tgl_registrasi . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
+            $baseDatetime = Carbon::parse(explode(' ', $reg->tgl_registrasi)[0] . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
             $estimasidilayani = $baseDatetime->copy()->addMinutes($noRegInt * 2);
 
             $pasienbaru = 0;
@@ -579,8 +656,10 @@ class MobileJknService
 
             if (empty($nomorreferensi)) {
                 $jenisKunjungan = 3; // Kontrol
-                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, date('m', strtotime($reg->tgl_registrasi)), date('Y', strtotime($reg->tgl_registrasi)));
+                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
             }
+
+            Log::info("Nomor Referensi: {$nomorreferensi}, Jenis Kunjungan: {$jenisKunjungan}");
 
             $angkaAntrean = str_pad((string) intval($reg->no_reg), 3, '0', STR_PAD_LEFT);
             $nomorAntrean = ($kodepoli ? $kodepoli : $reg->kd_poli) . '-' . $angkaAntrean;
@@ -595,7 +674,7 @@ class MobileJknService
                 'kodepoli' => $kodepoli,
                 'namapoli' => $namapoli,
                 'pasienbaru' => $pasienbaru,
-                'tanggalperiksa' => $reg->tgl_registrasi,
+                'tanggalperiksa' => explode(' ', $reg->tgl_registrasi)[0],
                 'kodedokter' => $kodedokter,
                 'namadokter' => $namadokter,
                 'jampraktek' => $jampraktek,
@@ -611,6 +690,7 @@ class MobileJknService
                 'keterangan' => 'Peserta harap 30 menit lebih awal guna pencatatan administrasi.'
             ];
 
+            date_default_timezone_set('UTC');
             // Make the actual BPJS API call
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
@@ -623,7 +703,7 @@ class MobileJknService
             ]);
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::withHeaders(headers: [
                 'Content-Type' => 'application/json',
                 'x-cons-id' => $this->consId,
                 'x-timestamp' => $timestamp,
@@ -663,13 +743,13 @@ class MobileJknService
                 ]
             ];
 
-        } catch (Throwable $e) {
+        } catch (Exception $e) {
             Log::error('Error in sendAddAntreanByNoRawat: ' . $e->getMessage());
             return [
                 'status' => false,
                 'message' => $e->getMessage(),
                 'data' => [],
-                'payload' => null,
+                'payload' => $payload,
                 'bpjs' => null
             ];
         }
@@ -683,10 +763,11 @@ class MobileJknService
         $noRujukan = '';
 
         try {
+            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
-            $url = rtrim($this->baseUrl, '/') . '/Rujukan/List/Peserta/' . $noPeserta;
+            $url = rtrim($this->baseUrlVclaim, '/') . '/Rujukan/List/Peserta/' . $noPeserta;
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
@@ -697,6 +778,7 @@ class MobileJknService
             ])->get($url);
 
             $responseData = $response->json();
+            Log::info('Rujukan ', ['response' => $response]);
 
             // Log request/response to BPJS log
             try {
@@ -720,8 +802,36 @@ class MobileJknService
                 // Response may contain 'response' as an object/array or a JSON string
                 if (isset($responseData['response'])) {
                     $respContent = $responseData['response'];
-
+                    
+                    // Handle encrypted response
                     if (is_string($respContent)) {
+                        try {
+                            // Generate decryption key using consid + secretkey + timestamp
+                            $decryptionKey = $this->generateDecryptionKey($timestamp);
+                            
+                            // Decrypt response using our generated key
+                            $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
+                            
+                            // Decompress if needed
+                            if ($decryptedResponse) {
+                                $decompressedResponse = $this->decompress($decryptedResponse);
+                                $decoded = json_decode($decompressedResponse, true);
+                                
+                                Log::info('Decrypted rujukan response', [
+                                    'decrypted' => substr($decryptedResponse, 0, 100) . '...',
+                                    'decompressed' => substr($decompressedResponse, 0, 100) . '...'
+                                ]);
+                                
+                                if (is_array($decoded) && isset($decoded['rujukan'])) {
+                                    $rujukanList = $decoded['rujukan'];
+                                }
+                            }
+                        } catch (Throwable $decryptError) {
+                            Log::error('Error decrypting BPJS rujukan response', [
+                                'error' => $decryptError->getMessage()
+                            ]);
+                        }
+                    } elseif (is_string($respContent)) {
                         $decoded = json_decode($respContent, true);
                         if (is_array($decoded) && isset($decoded['rujukan'])) {
                             $rujukanList = $decoded['rujukan'];
@@ -757,10 +867,11 @@ class MobileJknService
         $noRujukan = '';
 
         try {
+            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
-            $url = rtrim($this->baseUrl, '/') . '/Rujukan/RS/List/Peserta/' . $noPeserta;
+            $url = rtrim($this->baseUrlVclaim, '/') . '/Rujukan/RS/List/Peserta/' . $noPeserta;
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
@@ -771,6 +882,7 @@ class MobileJknService
             ])->get($url);
 
             $responseData = $response->json();
+            Log::info('Rujukan RS ', ['response' => $response]);
 
             // Log request/response to BPJS log
             try {
@@ -793,8 +905,36 @@ class MobileJknService
 
                 if (isset($responseData['response'])) {
                     $respContent = $responseData['response'];
-
+                    
+                    // Handle encrypted response
                     if (is_string($respContent)) {
+                        try {
+                            // Generate decryption key using consid + secretkey + timestamp
+                            $decryptionKey = $this->generateDecryptionKey($timestamp);
+                            
+                            // Decrypt response using our generated key
+                            $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
+                            
+                            // Decompress if needed
+                            if ($decryptedResponse) {
+                                $decompressedResponse = $this->decompress($decryptedResponse);
+                                $decoded = json_decode($decompressedResponse, true);
+                                
+                                Log::info('Decrypted rujukan RS response', [
+                                    'decrypted' => substr($decryptedResponse, 0, 100) . '...',
+                                    'decompressed' => substr($decompressedResponse, 0, 100) . '...'
+                                ]);
+                                
+                                if (is_array($decoded) && isset($decoded['rujukan'])) {
+                                    $rujukanList = $decoded['rujukan'];
+                                }
+                            }
+                        } catch (Throwable $decryptError) {
+                            Log::error('Error decrypting BPJS rujukan RS response', [
+                                'error' => $decryptError->getMessage()
+                            ]);
+                        }
+                    } elseif (is_string($respContent)) {
                         $decoded = json_decode($respContent, true);
                         if (is_array($decoded) && isset($decoded['rujukan'])) {
                             $rujukanList = $decoded['rujukan'];
@@ -820,8 +960,6 @@ class MobileJknService
             Log::error('Error fetching BPJS rujukan RS', ['noPeserta' => $noPeserta, 'error' => $e->getMessage()]);
             return $noRujukan;
         }
-
-        
     }
 
     /**
@@ -837,10 +975,11 @@ class MobileJknService
             $bulan = $bulan ?: $now->format('m');
             $tahun = $tahun ?: $now->format('Y');
 
+            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
-            $url = rtrim($this->baseUrl, '/') . "/RencanaKontrol/ListRencanaKontrol/Bulan/{$bulan}/Tahun/{$tahun}/Nokartu/{$noPeserta}/filter/{$filter}";
+            $url = rtrim($this->baseUrlVclaim, '/') . "/RencanaKontrol/ListRencanaKontrol/Bulan/{$bulan}/Tahun/{$tahun}/Nokartu/{$noPeserta}/filter/{$filter}";
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
@@ -851,7 +990,7 @@ class MobileJknService
             ])->get($url);
 
             $responseData = $response->json();
-
+            Log::info('Kontrol ', ['response' => $response]);
             // Log request/response
             try {
                 $this->bpjsLogService->logRequest(
@@ -869,7 +1008,40 @@ class MobileJknService
             $code = $meta['code'] ?? $meta['status'] ?? null;
 
             if ($code === '200' || $code === 200) {
-                $list = $responseData['response']['list'] ?? null;
+                $respContent = $responseData['response'] ?? null;
+                $list = null;
+                
+                // Handle encrypted response
+                if (is_string($respContent)) {
+                    try {
+                        // Generate decryption key using consid + secretkey + timestamp
+                        $decryptionKey = $this->generateDecryptionKey($timestamp);
+                        
+                        // Decrypt response using our generated key
+                        $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
+                        
+                        // Decompress if needed
+                        if ($decryptedResponse) {
+                            $decompressedResponse = $this->decompress($decryptedResponse);
+                            $decoded = json_decode($decompressedResponse, true);
+                            
+                            Log::info('Decrypted kontrol response', [
+                                'decrypted' => substr($decryptedResponse, 0, 100) . '...',
+                                'decompressed' => substr($decompressedResponse, 0, 100) . '...'
+                            ]);
+                            
+                            if (is_array($decoded) && isset($decoded['list'])) {
+                                $list = $decoded['list'];
+                            }
+                        }
+                    } catch (Throwable $decryptError) {
+                        Log::error('Error decrypting BPJS kontrol response', [
+                            'error' => $decryptError->getMessage()
+                        ]);
+                    }
+                } else {
+                    $list = $responseData['response']['list'] ?? null;
+                }
 
                 if (is_array($list)) {
                     foreach ($list as $item) {
@@ -887,6 +1059,166 @@ class MobileJknService
         } catch (Throwable $e) {
             Log::error('Error fetching BPJS rencana kontrol', ['noPeserta' => $noPeserta, 'error' => $e->getMessage()]);
             return $noSuratKontrol;
+        }
+    }
+
+    /**
+     * Cancel an appointment in Mobile JKN API
+     * 
+     * @param string $kodeBooking Registration code / booking code
+     * @param string $keterangan Reason for cancellation
+     * @return array
+     */
+    public function batalAntrean(string $kodeBooking, string $keterangan = ''): array
+    {
+        try {
+            if (empty($kodeBooking)) {
+                throw new InvalidArgumentException('Kode booking is required');
+            }
+
+            // Default reason if not provided
+            if (empty($keterangan)) {
+                $keterangan = 'Pembatalan antrean oleh pasien/RS';
+            }
+            
+            // Generate timestamp and signature
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            // Prepare request data
+            $requestData = [
+                'kodebooking' => $kodeBooking,
+                'keterangan' => $keterangan
+            ];
+
+            // Log the request
+            Log::info('Mobile JKN Batal Antrean Request', [
+                'kodebooking' => $kodeBooking,
+                'timestamp' => $timestamp,
+                'request_data' => $requestData
+            ]);
+
+            // Make HTTP request
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-cons-id' => $this->consId,
+                'x-timestamp' => $timestamp,
+                'x-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->post($this->baseUrl . '/antrean/batal', $requestData);
+
+            // Parse response
+            $responseData = $response->json();
+
+            // Log to BPJS log database
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode($requestData),
+                json_encode($responseData),
+                $this->baseUrl . '/antrean/batal',
+                'POST'
+            );
+
+            // Log the response
+            Log::info('Mobile JKN Batal Antrean Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            // If successful, save cancellation to local DB
+            // if ($response->successful()) {
+            //     try {
+            //         // Get registration data
+            //         $regPeriksa = RegPeriksa::where('no_rawat', $kodeBooking)->first();
+                    
+            //         // If not found as no_rawat, try finding via BPJS referral table
+            //         if (!$regPeriksa) {
+            //             $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodeBooking)->first();
+            //             if ($referensi) {
+            //                 $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
+            //             }
+            //         }
+
+            //         // Save cancellation record if reg data found
+            //         if ($regPeriksa) {
+            //             $batalRecord = new ReferensiMobilejknBpjsBatal([
+            //                 'no_rawat' => $regPeriksa->no_rawat,
+            //                 'nobooking' => $kodeBooking,
+            //                 'status' => 'Batal',
+            //                 'keterangan' => $keterangan,
+            //                 'response' => json_encode($responseData),
+            //                 'tanggal' => now()
+            //             ]);
+            //             $batalRecord->save();
+            //         }
+            //     } catch (Throwable $e) {
+            //         Log::error('Failed to save ReferensiMobilejknBpjsBatal', ['error' => $e->getMessage(), 'kodebooking' => $kodeBooking]);
+            //     }
+            // }
+
+            return [
+                'success' => $response->successful(),
+                'status_code' => $response->status(),
+                'data' => $responseData,
+                'metadata' => $responseData['metadata'] ?? null
+            ];
+
+        } catch (Exception $e) {
+            // Log error to BPJS log database
+            $this->bpjsLogService->logRequest(
+                500,
+                json_encode(['kodebooking' => $kodeBooking, 'keterangan' => $keterangan]),
+                $e->getMessage(),
+                $this->baseUrl . '/antrean/batal',
+                'POST'
+            );
+
+            Log::error('Mobile JKN Batal Antrean Error', [
+                'kodebooking' => $kodeBooking,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'status_code' => 500
+            ];
+        }
+    }
+
+    /**
+     * Wrapper method to cancel an appointment by No. Rawat
+     * Handles finding the correct BPJS booking code
+     * 
+     * @param string $noRawat Hospital registration number
+     * @param string $keterangan Reason for cancellation
+     * @return array
+     */
+    public function batalAntreanByNoRawat(string $noRawat, string $keterangan = ''): array
+    {
+        try {
+            // Find BPJS booking code
+            $referensi = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->first();
+            
+            // If found in referensi table, use nobooking
+            if ($referensi && $referensi->nobooking) {
+                return $this->batalAntrean($referensi->nobooking, $keterangan);
+            }
+            
+            // Otherwise use no_rawat as the booking code
+            return $this->batalAntrean($noRawat, $keterangan);
+            
+        } catch (Exception $e) {
+            Log::error('Error canceling appointment by no_rawat', [
+                'no_rawat' => $noRawat,
+                'error' => $e->getMessage()
+            ]);
+            
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'status_code' => 500
+            ];
         }
     }
 }

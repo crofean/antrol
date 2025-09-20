@@ -44,7 +44,8 @@ class MobileJknController extends Controller
             return response()->json([
                 'success' => $result['success'],
                 'message' => $result['error'] ?? $result['metadata']['message'] ?? $result['message'] ?? null,
-                'response' => $result['data'] ?? $result['response'] ?? null
+                'response' => $result['data'] ?? $result['response'] ?? null,
+                'batal' => $result['batal']['data'] ?? null
             ]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);

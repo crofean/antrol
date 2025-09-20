@@ -224,7 +224,7 @@ class RegPeriksaService
     {
         $date = $filters['date'] ?? Carbon::today()->format('Y-m-d');
         $filters['date'] = $date;
-        $filters['kd_pj'] = env('APP_BPJS_KODE', 'A65');
+        $filters['kd_pj'] = env('APP_BPJS_KODE', 'BPJ');
 
         return $this->getPatientsWithFilters($filters, $perPage);
     }

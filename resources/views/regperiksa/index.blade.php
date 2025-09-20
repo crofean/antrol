@@ -1020,6 +1020,8 @@
                                 <div class="ml-3">
                                     <p class="text-sm text-red-700">
                                         <strong>Error!</strong> ${data.message || 'Failed to add appointment'}
+                                        <br>
+                                        ${data.payload ? formatJson(JSON.stringify(data.payload)) : ''}
                                     </p>
                                 </div>
                             </div>

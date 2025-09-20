@@ -39,8 +39,8 @@ class SendBpjsTaskIds extends Command
         $this->newLine();
 
         // Get configuration from environment
-        $kdPj = config('services.mobilejkn.kd_pj', 'BPJ');
-        $excludePoli = config('services.mobilejkn.exclude_poli', '');
+        $kdPj = config('mobilejkn.kd_pj', 'BPJ');
+        $excludePoli = config('mobilejkn.exclude_poli', 'HD,IGD,IGDK,IRM');
         $excludePoliArray = array_filter(explode(',', $excludePoli));
 
         // Get date range
@@ -63,9 +63,6 @@ class SendBpjsTaskIds extends Command
         ])
         ->where('kd_pj', $kdPj)
         ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo]);
-        // ->whereHas('referensiMobilejknBpjs', function($q) {
-        //     $q->whereNotNull('nobooking');
-        // });
 
         // Exclude specific poli if configured
         if (!empty($excludePoliArray)) {
@@ -122,10 +119,10 @@ class SendBpjsTaskIds extends Command
             return;
         }
 
-        $kodebooking = $referensi ? $referensi->no_rawat : $patient->no_rawat;
+        $kodebooking = $patient->no_rawat;
 
         // Prepare patient data for antrean
-        $patientData = $this->preparePatientData($patient, $referensi);
+        // $patientData = $this->preparePatientData($patient, $referensi);
 
         // Add antrean first
         $this->line("Processing patient: {$patient->no_rawat} (Booking: {$kodebooking})");
