@@ -542,6 +542,9 @@
             // Update modal title
             document.getElementById('taskIdModalTitle').textContent = `Send Task ID ${nextTaskId}`;
             
+            // Show the "Send Antrean" button
+            document.getElementById('showAntreanFormButton').classList.remove('hidden');
+            
             // Fetch necessary data for the task ID
             fetchTaskIdData(noRawat, kodeBooking, nextTaskId);
         }
@@ -1173,6 +1176,45 @@
             document.getElementById('taskIdModal').classList.add('hidden');
         }
         
+        // Function to show the antrean form
+        function showAntreanForm() {
+            // We already have the currentNoRawat from when the modal was opened
+            if (!currentNoRawat) {
+                console.error('No patient record selected');
+                return;
+            }
+            
+            // Create a basic antrean payload
+            const addAntreanPayload = {
+                kodebooking: currentKodeBooking || currentNoRawat,
+                jenispasien: "JKN",
+                nomorkartu: "",
+                nik: "",
+                nohp: "",
+                kodepoli: "",
+                namapoli: "",
+                pasienbaru: 0,
+                norm: "",
+                tanggalperiksa: new Date().toISOString().slice(0, 10),
+                kodedokter: "",
+                namadokter: "",
+                jampraktek: "08:00-16:00",
+                jeniskunjungan: 1,
+                nomorreferensi: "",
+                nomorantrean: "",
+                angkaantrean: 1,
+                estimasidilayani: new Date().toTimeString().substring(0, 5),
+                sisakuotajkn: 5,
+                kuotajkn: 30,
+                sisakuotanonjkn: 5,
+                kuotanonjkn: 30,
+                keterangan: "Peserta harap 30 menit sebelum dilayani"
+            };
+            
+            // Directly display the antrean form
+            displayAddAntreanForm(addAntreanPayload, currentNoRawat);
+        }
+        
         // Helper functions
         function generateBookingCode() {
             const timestamp = new Date().getTime().toString();
@@ -1271,6 +1313,9 @@
             </div>
 
             <div class="flex justify-end mt-4 space-x-2">
+                <button id="showAntreanFormButton" onclick="showAntreanForm()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition duration-200 hidden">
+                    Send Antrean
+                </button>
                 <button id="taskIdSendButton" onclick="sendTaskId()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition duration-200">
                     Send Task ID
                 </button>
