@@ -47,8 +47,8 @@ class SendBpjsTaskIds extends Command
         $excludePoliArray = array_filter(explode(',', $excludePoli));
 
         // Get date range
-        $dateFrom = $this->option('date-from') ?: Carbon::today()->format('Y-m-d');
-        $dateTo = $this->option('date-to') ?: Carbon::today()->format('Y-m-d');
+        $dateFrom = $this->option('date-from') ?: date('Y-m-d');
+        $dateTo = $this->option('date-to') ?: date('Y-m-d');
 
         $this->info("Processing patients from {$dateFrom} to {$dateTo}");
         $this->info("BPJS Payer Code: {$kdPj}");
@@ -207,7 +207,14 @@ class SendBpjsTaskIds extends Command
 
             // Calculate estimated service time
             $noRegInt = intval($patient->no_reg);
-            $baseDatetime = Carbon::parse(explode(' ', $patient->tgl_registrasi)[0] . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
+            // Handle tgl_registrasi which might be a Carbon instance or string
+            $tglRegistrasi = $patient->tgl_registrasi;
+            if ($tglRegistrasi instanceof Carbon) {
+                $tglRegistrasiStr = $tglRegistrasi->format('Y-m-d');
+            } else {
+                $tglRegistrasiStr = $tglRegistrasi ? explode(' ', $tglRegistrasi)[0] : date('Y-m-d');
+            }
+            $baseDatetime = Carbon::parse($tglRegistrasiStr . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
             $estimasidilayani = $baseDatetime->copy()->addMinutes($noRegInt * 2);
 
             // Determine if patient is new
@@ -247,7 +254,7 @@ class SendBpjsTaskIds extends Command
                 'namapoli' => $namapoli,
                 'pasienbaru' => $pasienbaru,
                 'norm' => $patient->no_rkm_medis,
-                'tanggalperiksa' => explode(' ', $patient->tgl_registrasi)[0],
+                'tanggalperiksa' => $tglRegistrasiStr,
                 'kodedokter' => $kodedokter,
                 'namadokter' => $namadokter,
                 'jampraktek' => $jampraktek,
@@ -273,6 +280,16 @@ class SendBpjsTaskIds extends Command
             $angkaAntrean = str_pad((string) intval($patient->no_reg), 3, '0', STR_PAD_LEFT);
             $nomorAntrean = $patient->kd_poli . '-' . $angkaAntrean;
             
+            // Safe date handling for fallback
+            $tglRegistrasi = $patient->tgl_registrasi;
+            if ($tglRegistrasi instanceof \Carbon\Carbon) {
+                $tanggalperiksa = $tglRegistrasi->format('Y-m-d');
+            } elseif ($tglRegistrasi) {
+                $tanggalperiksa = explode(' ', $tglRegistrasi)[0];
+            } else {
+                $tanggalperiksa = date('Y-m-d');
+            }
+            
             return [
                 'kodebooking' => $patient->no_rawat,
                 'jenispasien' => 'JKN',
@@ -283,7 +300,7 @@ class SendBpjsTaskIds extends Command
                 'namapoli' => $patient->poliklinik->nm_poli ?? '',
                 'pasienbaru' => 0,
                 'norm' => $patient->no_rkm_medis,
-                'tanggalperiksa' => explode(' ', $patient->tgl_registrasi)[0],
+                'tanggalperiksa' => $tanggalperiksa,
                 'kodedokter' => $patient->kd_dokter,
                 'namadokter' => $patient->dokter->nm_dokter ?? '',
                 'jampraktek' => '08:00-16:00',
