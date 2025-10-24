@@ -6,6 +6,9 @@ use App\Models\ReferensiMobilejknBpjs;
 use App\Models\RegPeriksa;
 use App\Models\Poliklinik;
 use App\Models\Dokter;
+use App\Models\MapingPoliBpjs;
+use App\Models\MapingDokterDpjpvclaim;
+use App\Models\Jadwal;
 use App\Services\MobileJknService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -40,7 +43,7 @@ class SendBpjsTaskIds extends Command
 
         // Get configuration from environment
         $kdPj = config('mobilejkn.kd_pj', 'BPJ');
-        $excludePoli = config('mobilejkn.exclude_poli', 'HD,IGD,IGDK,IRM');
+        $excludePoli = config('mobilejkn.exclude_poli', 'HD,IGD,IGDK');
         $excludePoliArray = array_filter(explode(',', $excludePoli));
 
         // Get date range
@@ -59,7 +62,8 @@ class SendBpjsTaskIds extends Command
             'referensiMobilejknBpjs',
             'poliklinik',
             'dokter',
-            'pasien'
+            'pasien',
+            'bridgingSep'
         ])
         ->where('kd_pj', $kdPj)
         ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo]);
@@ -173,32 +177,128 @@ class SendBpjsTaskIds extends Command
 
     /**
      * Prepare patient data for antrean API
+     * Uses the same logic as MobileJknService::sendAddAntreanByNoRawatInternal
      */
     protected function preparePatientData($patient, $referensi)
     {
-        return [
-            'nobooking' => $referensi->nobooking,
-            'nomorkartu' => $referensi->nomorkartu,
-            'nik' => $referensi->nik,
-            'nohp' => $referensi->nohp,
-            'kodepoli' => $referensi->kodepoli,
-            'nm_poli' => $patient->poliklinik->nm_poli ?? '',
-            'pasienbaru' => $referensi->pasienbaru,
-            'no_rkm_medis' => $referensi->norm,
-            'tanggalperiksa' => $referensi->tanggalperiksa->format('Y-m-d'),
-            'kodedokter' => $referensi->kodedokter,
-            'nm_dokter' => $patient->dokter->nm_dokter ?? '',
-            'jampraktek' => $referensi->jampraktek,
-            'jeniskunjungan' => $referensi->jeniskunjungan,
-            'nomorreferensi' => $referensi->nomorreferensi,
-            'nomorantrean' => $referensi->nomorantrean,
-            'angkaantrean' => $referensi->angkaantrean,
-            'estimasidilayani' => $referensi->estimasidilayani,
-            'sisakuotajkn' => $referensi->sisakuotajkn,
-            'kuotajkn' => $referensi->kuotajkn,
-            'sisakuotanonjkn' => $referensi->sisakuotanonjkn,
-            'kuotanonjkn' => $referensi->kuotanonjkn,
-        ];
+        try {
+            $pasien = $patient->pasien;
+            $mapPoli = MapingPoliBpjs::where('kd_poli_rs', $patient->kd_poli)->first();
+            $mapDok = MapingDokterDpjpvclaim::where('kd_dokter', $patient->kd_dokter)->first();
+
+            $jadwal = Jadwal::where('kd_dokter', $patient->kd_dokter)
+                ->where('kd_poli', $patient->kd_poli)
+                ->orderBy('jam_mulai')
+                ->first();
+
+            $kodepoli = $mapPoli ? $mapPoli->kd_poli_bpjs : $patient->kd_poli;
+            $namapoli = $patient->poliklinik->nm_poli ?? ($mapPoli->nm_poli_bpjs ?? null);
+            $kodedokter = $mapDok ? $mapDok->kd_dokter_bpjs : $patient->kd_dokter;
+            $namadokter = $mapDok ? ($mapDok->nm_dokter_bpjs ?? $patient->dokter->nm_dokter ?? null) : ($patient->dokter->nm_dokter ?? null);
+
+            // Determine jam praktek
+            if ($jadwal) {
+                $jamMulai = substr($jadwal->jam_mulai ?? '00:00:00', 0, 5);
+                $jamSelesai = substr($jadwal->jam_selesai ?? $jadwal->jam_mulai ?? '00:00:00', 0, 5);
+                $jampraktek = $jamMulai . '-' . $jamSelesai;
+            } else {
+                $jampraktek = '08:00-16:00';
+            }
+
+            // Calculate estimated service time
+            $noRegInt = intval($patient->no_reg);
+            $baseDatetime = Carbon::parse(explode(' ', $patient->tgl_registrasi)[0] . ' ' . ($jadwal->jam_mulai ?? '00:00:00'));
+            $estimasidilayani = $baseDatetime->copy()->addMinutes($noRegInt * 2);
+
+            // Determine if patient is new
+            $pasienbaru = 0;
+            if (stripos($patient->stts_daftar ?? '', 'Baru') !== false) {
+                $pasienbaru = 1;
+            }
+
+            // Determine jenis kunjungan and nomor referensi
+            // Try to get from bridging SEP or referensi
+            $jenisKunjungan = 1; // Default: Rujukan FKTP
+            $nomorreferensi = '';
+            
+            if ($patient->bridgingSep) {
+                $nomorreferensi = $patient->bridgingSep->no_rujukan ?? '';
+            } elseif ($referensi) {
+                $nomorreferensi = $referensi->nomorreferensi ?? '';
+            }
+            
+            // If no rujukan available, set default
+            if (empty($nomorreferensi)) {
+                $jenisKunjungan = 1; // Default to FKTP referral
+                $nomorreferensi = ''; // Will be empty
+            }
+
+            // Build nomor antrean
+            $angkaAntrean = str_pad((string) intval($patient->no_reg), 3, '0', STR_PAD_LEFT);
+            $nomorAntrean = ($kodepoli ? $kodepoli : $patient->kd_poli) . '-' . $angkaAntrean;
+
+            return [
+                'kodebooking' => $patient->no_rawat,
+                'jenispasien' => 'JKN',
+                'nomorkartu' => $pasien->no_peserta ?? '',
+                'nik' => $pasien->no_ktp ?? '',
+                'nohp' => $pasien->no_tlp ?? '',
+                'kodepoli' => $kodepoli,
+                'namapoli' => $namapoli,
+                'pasienbaru' => $pasienbaru,
+                'norm' => $patient->no_rkm_medis,
+                'tanggalperiksa' => explode(' ', $patient->tgl_registrasi)[0],
+                'kodedokter' => $kodedokter,
+                'namadokter' => $namadokter,
+                'jampraktek' => $jampraktek,
+                'jeniskunjungan' => $jenisKunjungan,
+                'nomorreferensi' => $nomorreferensi,
+                'nomorantrean' => $nomorAntrean,
+                'angkaantrean' => intval($patient->no_reg),
+                'estimasidilayani' => (int) ($estimasidilayani->timestamp * 1000),
+                'sisakuotajkn' => $jadwal ? max(0, intval($jadwal->kuota) - intval($patient->no_reg)) : 0,
+                'kuotajkn' => $jadwal ? intval($jadwal->kuota) : 0,
+                'sisakuotanonjkn' => $jadwal ? max(0, intval($jadwal->kuota) - intval($patient->no_reg)) : 0,
+                'kuotanonjkn' => $jadwal ? intval($jadwal->kuota) : 0,
+                'keterangan' => 'Peserta harap 30 menit sebelum dilayani'
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error preparing patient data', [
+                'no_rawat' => $patient->no_rawat,
+                'error' => $e->getMessage()
+            ]);
+            
+            // Return basic fallback data with same format as MobileJknService
+            $pasien = $patient->pasien;
+            $angkaAntrean = str_pad((string) intval($patient->no_reg), 3, '0', STR_PAD_LEFT);
+            $nomorAntrean = $patient->kd_poli . '-' . $angkaAntrean;
+            
+            return [
+                'kodebooking' => $patient->no_rawat,
+                'jenispasien' => 'JKN',
+                'nomorkartu' => $pasien->no_peserta ?? '',
+                'nik' => $pasien->no_ktp ?? '',
+                'nohp' => $pasien->no_tlp ?? '',
+                'kodepoli' => $patient->kd_poli,
+                'namapoli' => $patient->poliklinik->nm_poli ?? '',
+                'pasienbaru' => 0,
+                'norm' => $patient->no_rkm_medis,
+                'tanggalperiksa' => explode(' ', $patient->tgl_registrasi)[0],
+                'kodedokter' => $patient->kd_dokter,
+                'namadokter' => $patient->dokter->nm_dokter ?? '',
+                'jampraktek' => '08:00-16:00',
+                'jeniskunjungan' => 1,
+                'nomorreferensi' => '',
+                'nomorantrean' => $nomorAntrean,
+                'angkaantrean' => intval($patient->no_reg),
+                'estimasidilayani' => (int) (now()->timestamp * 1000),
+                'sisakuotajkn' => 0,
+                'kuotajkn' => 0,
+                'sisakuotanonjkn' => 0,
+                'kuotanonjkn' => 0,
+                'keterangan' => 'Peserta harap 30 menit sebelum dilayani'
+            ];
+        }
     }
 
     /**
