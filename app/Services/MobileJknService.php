@@ -21,6 +21,7 @@ use App\Models\ReferensiMobilejknBpjsTaskid;
 use Throwable;
 use App\Models\Jadwal;
 use App\Models\Pasien;
+use Illuminate\Support\Facades\DB;
 
 class MobileJknService
 {
@@ -109,7 +110,9 @@ class MobileJknService
     public function getTaskTimestampFromDatabase(string $kodebooking, int $taskid): ?string
     {
         try {
-            switch ($taskid) {
+            switch ($taskid) {  
+                case 2:
+                    return $this->getTask2Timestamp($kodebooking); // 1 hour before task 3
                 case 3:
                     return $this->getTask3Timestamp($kodebooking);
                 case 4:
@@ -133,6 +136,29 @@ class MobileJknService
             ]);
             return null;
         }
+    }
+
+    /**
+     * Get task 3 timestamp - from referensi_mobilejkn_bpjs validasi or reg_periksa jam_reg
+     */
+    protected function getTask2Timestamp(string $kodebooking): ?string
+    {
+        // First try to get from referensi_mobilejkn_bpjs
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+
+        if ($referensi && $referensi->validasi) {
+            return $referensi->validasi->timestamp * 1000;
+        }
+
+        // If not found, get from reg_periksa jam_reg
+        $regPeriksa = RegPeriksa::select(DB::raw('CONCAT(tgl_registrasi, " ", jam_reg + INTERVAL 5 MINUTE) AS waktu_reg'))->where('no_rawat', $referensi ? $referensi->no_rawat : $kodebooking)->first();
+
+        if ($regPeriksa && $regPeriksa->waktu_reg) {
+            $waktuReg =  Carbon::parse($regPeriksa->waktu_reg);
+            return $waktuReg->timestamp * 1000;
+        }
+
+        return null;
     }
 
     /**
@@ -287,10 +313,10 @@ class MobileJknService
             ]);
 
             $batal = '';
-            if ($taskid == 99) {
-                $refBatal = ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
-                $batal = $this->batalAntrean($kodebooking, $refBatal ? $refBatal->keterangan : 'Batal.');
-            }
+            // if ($taskid == 99) {
+            //     $refBatal = ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
+            //     $batal = $this->batalAntrean($kodebooking, $refBatal ? $refBatal->keterangan : 'Batal.');
+            // }
 
             // Make HTTP request
             $response = Http::withHeaders([

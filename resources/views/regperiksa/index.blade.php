@@ -600,6 +600,20 @@
                             return;
                         }
 
+                        if (taskList.find(t => t.taskid == "2") == undefined && patient.bridging_sep) {
+                            // Build Task ID 2 payload using patient fields from the response
+                            taskIdPayload = {
+                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                taskid: 2,
+                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                                waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
+                            };
+
+                            // Display the Task ID form (Pasien datang) pre-filled with SEP data
+                            displayTaskIdForm(2, "Pasien check-in / kedatangan", taskIdPayload, patient);
+                            return;
+                        }
+
                         // If BPJS bridging SEP exists, treat as already-registered in BPJS
                         if (taskList.find(t => t.taskid == "3") == undefined && patient.bridging_sep) {
                             // Build Task ID 3 payload using patient fields from the response
