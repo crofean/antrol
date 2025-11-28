@@ -65,7 +65,7 @@ class SendBpjsTaskIds extends Command
             'pasien',
             'bridgingSep'
         ])
-        ->where('kd_pj', $kdPj)
+        ->where('kd_pj', 'A65')
         ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo]);
 
         // Exclude specific poli if configured
@@ -120,7 +120,6 @@ class SendBpjsTaskIds extends Command
         $referensi = $patient->referensiMobilejknBpjs;
         if (!$referensi) {
             $this->line("No referensi data for patient: {$patient->no_rawat}");
-            return;
         }
 
         $kodebooking = $patient->no_rawat;

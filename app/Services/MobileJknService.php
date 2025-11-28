@@ -21,7 +21,6 @@ use App\Models\ReferensiMobilejknBpjsTaskid;
 use Throwable;
 use App\Models\Jadwal;
 use App\Models\Pasien;
-use Illuminate\Support\Facades\DB;
 
 class MobileJknService
 {
@@ -110,9 +109,7 @@ class MobileJknService
     public function getTaskTimestampFromDatabase(string $kodebooking, int $taskid): ?string
     {
         try {
-            switch ($taskid) {  
-                case 2:
-                    return $this->getTask2Timestamp($kodebooking); // 1 hour before task 3
+            switch ($taskid) {
                 case 3:
                     return $this->getTask3Timestamp($kodebooking);
                 case 4:
@@ -136,29 +133,6 @@ class MobileJknService
             ]);
             return null;
         }
-    }
-
-    /**
-     * Get task 3 timestamp - from referensi_mobilejkn_bpjs validasi or reg_periksa jam_reg
-     */
-    protected function getTask2Timestamp(string $kodebooking): ?string
-    {
-        // First try to get from referensi_mobilejkn_bpjs
-        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
-
-        if ($referensi && $referensi->validasi) {
-            return $referensi->validasi->timestamp * 1000;
-        }
-
-        // If not found, get from reg_periksa jam_reg
-        $regPeriksa = RegPeriksa::select(DB::raw('CONCAT(tgl_registrasi, " ", jam_reg + INTERVAL 5 MINUTE) AS waktu_reg'))->where('no_rawat', $referensi ? $referensi->no_rawat : $kodebooking)->first();
-
-        if ($regPeriksa && $regPeriksa->waktu_reg) {
-            $waktuReg =  Carbon::parse($regPeriksa->waktu_reg);
-            return $waktuReg->timestamp * 1000;
-        }
-
-        return null;
     }
 
     /**
@@ -675,15 +649,15 @@ class MobileJknService
 
             $jenisKunjungan = 1;
             $nomorreferensi = $this->fetchRujukan($pasien->no_peserta ?? '', $kodepoli);
-            if (empty($nomorreferensi)) {
-                $jenisKunjungan = 4; // Rujukan RS
-                $nomorreferensi = $this->fetchRujukanRS($pasien->no_peserta ?? '', $kodepoli);
-            }
+            // if (empty($nomorreferensi)) {
+                // $jenisKunjungan = 4; // Rujukan RS
+                // $nomorreferensi = $this->fetchRujukanRS($pasien->no_peserta ?? '', $kodepoli);
+            // }
 
-            if (empty($nomorreferensi)) {
-                $jenisKunjungan = 3; // Kontrol
-                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
-            }
+            // if (empty($nomorreferensi)) {
+                // $jenisKunjungan = 3; // Kontrol
+                // $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
+            // }
 
             Log::info("Nomor Referensi: {$nomorreferensi}, Jenis Kunjungan: {$jenisKunjungan}");
 
@@ -756,6 +730,79 @@ class MobileJknService
             ]);
 
             $status = $response->successful();
+            $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? '');
+
+            // If response is not OK or duplicate, retry with other jenis kunjungan values once each: 1,3,4
+            $acceptable = false;
+            if ($status) $acceptable = true;
+            if (is_string($metaMessage) && (strpos($metaMessage, 'Ok') !== false || strpos($metaMessage, 'Terdapat duplikasi') !== false)) {
+                $acceptable = true;
+            }
+
+            if (!$acceptable) {
+                $retryJenises = [1, 3, 4];
+                foreach ($retryJenises as $altJenis) {
+                    // skip the same jenis we already tried
+                    if ($altJenis == $jenisKunjungan) continue;
+
+                    // prepare payload with alternate jenis kunjungan and recompute nomorreferensi if needed
+                    $payload['jeniskunjungan'] = $altJenis;
+                    if ($altJenis === 1) {
+                        $payload['nomorreferensi'] = $this->fetchRujukan($pasien->no_peserta ?? '', $kodepoli) ?: '-';
+                    } elseif ($altJenis === 4) {
+                        $payload['nomorreferensi'] = $this->fetchRujukanRS($pasien->no_peserta ?? '', $kodepoli) ?: '-';
+                    } elseif ($altJenis === 3) {
+                        $payload['nomorreferensi'] = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli) ?: '-';
+                    }
+
+                    // regenerate headers/signature for each retry
+                    date_default_timezone_set('UTC');
+                    $timestamp = $this->getUtcTimestamp();
+                    $signature = base64_encode($this->generateSignature($timestamp));
+
+                    // Log the retry attempt
+                    Log::info('Retry Mobile JKN Add Antrean Attempt', [
+                        'kodebooking' => $payload['kodebooking'],
+                        'jeniskunjungan' => $altJenis,
+                        'timestamp' => $timestamp,
+                        'request_data' => $payload
+                    ]);
+
+                    // perform the retry request
+                    $response = Http::withHeaders(headers: [
+                        'Content-Type' => 'application/json',
+                        'x-cons-id' => $this->consId,
+                        'x-timestamp' => $timestamp,
+                        'x-signature' => $signature,
+                        'user_key' => $this->userKey,
+                    ])->post($this->baseUrl . '/antrean/add', $payload);
+
+                    $responseData = $response->json();
+
+                    // Log to BPJS log database for retry
+                    $this->bpjsLogService->logRequest(
+                        $response->status(),
+                        json_encode($payload),
+                        json_encode($responseData),
+                        $this->baseUrl . '/antrean/add',
+                        'POST'
+                    );
+
+                    Log::info('Mobile JKN Add Antrean Response (retry)', [
+                        'status' => $response->status(),
+                        'response' => $responseData
+                    ]);
+
+                    $status = $response->successful();
+                    $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? '');
+
+                    if ($status || (is_string($metaMessage) && (strpos($metaMessage, 'Ok') !== false || strpos($metaMessage, 'Terdapat duplikasi') !== false))) {
+                        // successful or acceptable duplicate; stop retrying
+                        break;
+                    }
+                }
+            }
+
             $message = $status ? ($responseData['metadata']['message'] ?? 'Antrean sent') : ($responseData['metadata']['message'] ?? 'Mohon Maaf Gagal Mengirim Antrean, Silahkan Coba Lagi!');
 
             return [
