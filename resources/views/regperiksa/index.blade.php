@@ -38,6 +38,24 @@
                 </div>
             </div>
 
+            <!-- Shortcuts: quick access to BPJS pages -->
+            <div class="mt-4 flex items-center space-x-3">
+                <a href="{{ route('taskid.logs') }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-2">
+                    <i class="fas fa-paper-plane"></i>
+                    <span>Send Task IDs</span>
+                </a>
+
+                <a href="{{ route('bpjs-logs.index') }}" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-2">
+                    <i class="fas fa-list"></i>
+                    <span>BPJS Logs</span>
+                </a>
+
+                <a href="{{ route('command.index') }}" class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-2">
+                    <i class="fas fa-terminal"></i>
+                    <span>Run BPJS Command</span>
+                </a>
+            </div>
+
             <!-- Filters -->
             <form method="GET" action="{{ route('regperiksa.index') }}" class="bg-gray-50 p-4 rounded-lg">
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

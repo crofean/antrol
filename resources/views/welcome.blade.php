@@ -49,6 +49,16 @@
                 </nav>
             @endif
         </header>
+
+        {{-- Shortcuts: quick links for operational pages (Task ID, BPJS Logs, Run Command) --}}
+        <div class="w-full lg:max-w-4xl max-w-[335px] mb-4">
+            <div class="flex items-center gap-3">
+                <a href="{{ route('taskid.logs') }}" class="inline-block px-4 py-1.5 bg-[#1b1b18] text-white rounded-sm border border-black text-sm leading-normal">Send Task IDs</a>
+                <a href="{{ route('bpjs-logs.index') }}" class="inline-block px-4 py-1.5 bg-white text-[#1b1b18] rounded-sm border border-[#e3e3e0] text-sm leading-normal">BPJS Logs</a>
+                <a href="{{ route('command.index') }}" class="inline-block px-4 py-1.5 bg-white text-[#1b1b18] rounded-sm border border-[#e3e3e0] text-sm leading-normal">Run BPJS Command</a>
+            </div>
+        </div>
+
         <div class="flex items-center justify-center w-full transition-opacity opacity-100 duration-750 lg:grow starting:opacity-0">
             <main class="flex max-w-[335px] w-full flex-col-reverse lg:max-w-4xl lg:flex-row">
                 <div class="text-[13px] leading-[20px] flex-1 p-6 pb-12 lg:p-20 bg-white dark:bg-[#161615] dark:text-[#EDEDEC] shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d] rounded-bl-lg rounded-br-lg lg:rounded-tl-lg lg:rounded-br-none">

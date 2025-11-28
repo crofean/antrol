@@ -669,7 +669,7 @@ class MobileJknService
                 'jenispasien' => 'JKN',
                 'nomorkartu' => $pasien->no_peserta ?? '',
                 'nik' => $pasien->no_ktp ?? '',
-                'nohp' => $pasien->no_tlp ?? '00000000',
+                'nohp' => explode('/', $pasien->no_tlp)[0] ?? '00000000',
                 'norm' => $reg->no_rkm_medis,
                 'kodepoli' => $kodepoli,
                 'namapoli' => $namapoli,
