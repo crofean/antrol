@@ -542,8 +542,11 @@
             // Update modal title
             document.getElementById('taskIdModalTitle').textContent = `Send Task ID ${nextTaskId}`;
             
-            // Show the "Send Antrean" button
+            // Show the "Send Antrean" button and the automated flow button
             document.getElementById('showAntreanFormButton').classList.remove('hidden');
+            if (document.getElementById('taskIdAutoFlowButton')) {
+                document.getElementById('taskIdAutoFlowButton').classList.remove('hidden');
+            }
             
             // Fetch necessary data for the task ID
             fetchTaskIdData(noRawat, kodeBooking, nextTaskId);
@@ -1186,6 +1189,75 @@
             });
         }
         
+        // Automated flow: send Task IDs 3, 4, 5 in sequence
+        async function runTaskIdFlow() {
+            const kode = currentKodeBooking || currentNoRawat;
+            if (!kode) {
+                alert('No booking/no_rawat available to run task flow.');
+                return;
+            }
+
+            // Disable action buttons
+            const sendBtn = document.getElementById('taskIdSendButton');
+            const autoBtn = document.getElementById('taskIdAutoFlowButton');
+            const antreanBtn = document.getElementById('showAntreanFormButton');
+            if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Running...'; }
+            if (autoBtn) { autoBtn.disabled = true; autoBtn.textContent = 'Running...'; }
+            if (antreanBtn) { antreanBtn.disabled = true; }
+
+            // Clear or append start message
+            document.getElementById('taskIdModalContent').innerHTML += `<div class="mt-4 p-3 bg-blue-50 border-l-4 border-blue-400">Running automated Task ID flow (3 → 5)...</div>`;
+
+            const taskIds = [3,4,5];
+            for (const tid of taskIds) {
+                const payload = { kodebooking: kode, taskid: tid };
+
+                document.getElementById('taskIdModalContent').innerHTML += `<div class="mt-3"><strong>Sending Task ID ${tid}...</strong></div>`;
+
+                try {
+                    const resp = await fetch('/api/mobilejkn/update-task-id', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await resp.json();
+
+                    if (data.success) {
+                        document.getElementById('taskIdModalContent').innerHTML += `
+                            <div class="mt-2 bg-green-50 border-l-4 border-green-500 p-3">
+                                <p class="text-sm text-green-700">Task ID ${tid} sent successfully.</p>
+                            </div>
+                            <div class="mt-2"><pre class="bg-gray-100 p-2 rounded text-xs overflow-x-auto">${formatJson(JSON.stringify(data))}</pre></div>
+                        `;
+                    } else {
+                        document.getElementById('taskIdModalContent').innerHTML += `
+                            <div class="mt-2 bg-yellow-50 border-l-4 border-yellow-500 p-3">
+                                <p class="text-sm text-yellow-700">Task ID ${tid} returned: ${data.message || 'Failed'}</p>
+                            </div>
+                            <div class="mt-2"><pre class="bg-gray-100 p-2 rounded text-xs overflow-x-auto">${formatJson(JSON.stringify(data))}</pre></div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error('Error in automated task flow:', e);
+                    document.getElementById('taskIdModalContent').innerHTML += `
+                        <div class="mt-2 bg-red-50 border-l-4 border-red-500 p-3">
+                            <p class="text-sm text-red-700">Network error while sending Task ID ${tid}: ${e.message}</p>
+                        </div>
+                    `;
+                    // continue to next task id
+                }
+            }
+
+            // Re-enable buttons and update send button to allow closing
+            if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Close and Refresh'; sendBtn.onclick = function(){ window.location.reload(); } }
+            if (autoBtn) { autoBtn.disabled = false; autoBtn.textContent = 'Auto Task 3→5'; }
+            if (antreanBtn) { antreanBtn.disabled = false; }
+            document.getElementById('taskIdModalContent').innerHTML += `<div class="mt-4 p-3 bg-green-50 border-l-4 border-green-500">Automated flow complete.</div>`;
+        }
+
         function closeTaskIdModal() {
             document.getElementById('taskIdModal').classList.add('hidden');
         }
@@ -1329,6 +1401,9 @@
             <div class="flex justify-end mt-4 space-x-2">
                 <button id="showAntreanFormButton" onclick="showAntreanForm()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition duration-200 hidden">
                     Send Antrean
+                </button>
+                <button id="taskIdAutoFlowButton" onclick="runTaskIdFlow()" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-md transition duration-200 hidden">
+                    Auto Task 3→5
                 </button>
                 <button id="taskIdSendButton" onclick="sendTaskId()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition duration-200">
                     Send Task ID
