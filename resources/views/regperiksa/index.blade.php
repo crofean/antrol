@@ -95,6 +95,12 @@
                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
+                        <label for="nobooking" class="block text-sm font-medium text-gray-700 mb-1">No Booking</label>
+                        <input type="text" name="nobooking" id="nobooking" value="{{ $filters['nobooking'] ?? '' }}"
+                               placeholder="Search by no booking..."
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
                         <label for="status" class="block text-sm font-medium text-gray-700 mb-1">Status</label>
                         <select name="status" id="status"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -363,13 +369,13 @@
                         </div>
                         <h3 class="text-lg font-medium text-gray-900 mb-2">No Patients Found</h3>
                         <p class="text-gray-500 mb-4">
-                            @if(request()->hasAny(['no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter']))
+                            @if(request()->hasAny(['no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter']))
                                 No patients match your search criteria for {{ \Carbon\Carbon::parse($filters['date'])->format('d M Y') }}
                             @else
                                 There are no BPJS patients registered for {{ \Carbon\Carbon::parse($filters['date'])->format('d M Y') }}
                             @endif
                         </p>
-                        @if(request()->hasAny(['no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter']))
+                        @if(request()->hasAny(['no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter']))
                             <a href="{{ route('regperiksa.index', ['date' => $filters['date']]) }}" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
                                 <i class="fas fa-times mr-2"></i>Clear Filters
                             </a>
@@ -621,19 +627,19 @@
                             return;
                         }
 
-                        if (taskList.find(t => t.taskid == "2") == undefined && patient.bridging_sep) {
-                            // Build Task ID 2 payload using patient fields from the response
-                            taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
-                                taskid: 2,
-                                // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
-                                waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
-                            };
+                        // if (taskList.find(t => t.taskid == "2") == undefined && patient.bridging_sep) {
+                        //     // Build Task ID 2 payload using patient fields from the response
+                        //     taskIdPayload = {
+                        //         kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                        //         taskid: 2,
+                        //         // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
+                        //         waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
+                        //     };
 
-                            // Display the Task ID form (Pasien datang) pre-filled with SEP data
-                            displayTaskIdForm(2, "Pasien check-in / kedatangan", taskIdPayload, patient);
-                            return;
-                        }
+                        //     // Display the Task ID form (Pasien datang) pre-filled with SEP data
+                        //     displayTaskIdForm(2, "Pasien check-in / kedatangan", taskIdPayload, patient);
+                        //     return;
+                        // }
 
                         // If BPJS bridging SEP exists, treat as already-registered in BPJS
                         if (taskList.find(t => t.taskid == "3") == undefined && patient.bridging_sep) {

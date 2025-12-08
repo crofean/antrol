@@ -29,7 +29,7 @@ class RegPeriksaController extends Controller
     public function index(Request $request): View
     {
         $filters = $request->only([
-            'date', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter'
+            'date', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter'
         ]);
 
         $perPage = $request->get('per_page', 15);
@@ -54,7 +54,7 @@ class RegPeriksaController extends Controller
     public function getFilteredPatients(Request $request): JsonResponse
     {
         $filters = $request->only([
-            'date', 'kd_pj', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter'
+            'date', 'kd_pj', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter'
         ]);
 
         $perPage = $request->get('per_page', 15);

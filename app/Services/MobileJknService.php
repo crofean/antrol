@@ -655,8 +655,8 @@ class MobileJknService
             // }
 
             // if (empty($nomorreferensi)) {
-                // $jenisKunjungan = 3; // Kontrol
-                // $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
+                $jenisKunjungan = 3; // Kontrol
+                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
             // }
 
             Log::info("Nomor Referensi: {$nomorreferensi}, Jenis Kunjungan: {$jenisKunjungan}");

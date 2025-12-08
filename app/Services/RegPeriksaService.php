@@ -193,6 +193,13 @@ class RegPeriksaService
             });
         }
 
+        // Apply nobooking filter (from referensi_mobilejkn_bpjs relationship)
+        if (isset($filters['nobooking']) && !empty($filters['nobooking'])) {
+            $query->whereHas('referensiMobilejknBpjs', function($q) use ($filters) {
+                $q->where('nobooking', 'like', '%' . $filters['nobooking'] . '%');
+            });
+        }
+
         // Apply poli filter
         if (isset($filters['kd_poli']) && !empty($filters['kd_poli'])) {
             $query->where('kd_poli', 'like', '%' . $filters['kd_poli'] . '%');
@@ -224,7 +231,7 @@ class RegPeriksaService
     {
         $date = $filters['date'] ?? Carbon::today()->format('Y-m-d');
         $filters['date'] = $date;
-        $filters['kd_pj'] = env('APP_BPJS_KODE', 'BPJ');
+        $filters['kd_pj'] = env('APP_BPJS_KODE', 'A65');
 
         return $this->getPatientsWithFilters($filters, $perPage);
     }
