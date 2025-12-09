@@ -141,7 +141,7 @@ class MobileJknService
     protected function getTask3Timestamp(string $kodebooking): ?string
     {
         // First try to get from referensi_mobilejkn_bpjs
-        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->orderByDesc('validasi')->first();
 
         if ($referensi && $referensi->validasi) {
             return $referensi->validasi->timestamp * 1000;
