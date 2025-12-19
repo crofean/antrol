@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ReferensiMobilejknBpjs;
 use App\Models\RegPeriksa;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -85,7 +86,7 @@ class RegPeriksaService
      */
     public function getPatientByNoRawat(string $noRawat): ?RegPeriksa
     {
-        return RegPeriksa::with(['referensiMobilejknBpjs', 'bridgingSep'])
+        return RegPeriksa::with(['bridgingSep'])
             ->where('no_rawat', $noRawat)
             ->first();
     }

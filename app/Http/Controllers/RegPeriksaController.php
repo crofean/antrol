@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\MobileJknService;
 use App\Services\RegPeriksaService;
 use Illuminate\Http\Request;
+use App\Models\ReferensiMobilejknBpjs;
 use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
 use Carbon\Carbon;
@@ -29,7 +30,7 @@ class RegPeriksaController extends Controller
     public function index(Request $request): View
     {
         $filters = $request->only([
-            'date', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter'
+            'date', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter'
         ]);
 
         $perPage = $request->get('per_page', 15);
@@ -54,7 +55,7 @@ class RegPeriksaController extends Controller
     public function getFilteredPatients(Request $request): JsonResponse
     {
         $filters = $request->only([
-            'date', 'kd_pj', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'nobooking', 'status', 'kd_dokter'
+            'date', 'kd_pj', 'no_rkm_medis', 'no_rawat', 'no_kartu', 'no_sep', 'kd_poli', 'status', 'kd_dokter'
         ]);
 
         $perPage = $request->get('per_page', 15);
@@ -153,6 +154,8 @@ class RegPeriksaController extends Controller
         $noRawat = request()->get('no_rawat');
         $patient = $this->regPeriksaService->getPatientByNoRawat($noRawat);
 
+        $ref = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->where('status', 'Checkin')->first();
+
         $taskList = $this->mobileJknService->getTaskIdRecord($noRawat);
 
         // if ($include === 'task') {
@@ -168,7 +171,7 @@ class RegPeriksaController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $patient,
+            'data' => array_merge($patient->toArray(), ['referensi_mobilejkn_bpjs' => $ref->toArray()]),
             'task' => $task ?? null,
             'task_list' => $taskList ?? null
         ]);
