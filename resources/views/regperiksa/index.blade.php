@@ -597,10 +597,13 @@
                 taskid: taskId,
                 // waktu: new Date().toISOString().slice(0, 19).replace('T', ' ')
             };
+
+            console.log('Fetching data for Task ID:', taskId, 'with payload:', taskIdPayload);
+            console.log('noRawat:', noRawat, 'kodeBooking:', kodeBooking);
             
             // If kodeBooking is empty and taskId is 3, we need to add antrean first
             // if ((!kodeBooking || kodeBooking === '')) {
-                fetchAddAntreanData(noRawat, taskId);
+                fetchAddAntreanData(noRawat ?? kodeBooking, taskId);
                 return;
             // }
         }
@@ -613,10 +616,13 @@
                         const patient = data.data;
                         const task = data.task;
                         const taskList = data.task_list || [];
+                        const referensi = patient.referensi_mobilejkn_bpjs;
+                        const hasMobileJkn = !!(referensi && referensi.nobooking);
+                        const kodeBooking = hasMobileJkn ? referensi.nobooking : patient.no_rawat;
 
                         if (patient.stts == 'Batal') {
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 99,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu:  patient.tgl_registrasi + ' ' + patient.jam_reg
@@ -645,7 +651,7 @@
                         if (taskList.find(t => t.taskid == "3") == undefined && patient.bridging_sep) {
                             // Build Task ID 3 payload using patient fields from the response
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 3,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: patient.tgl_registrasi + ' ' + patient.jam_reg
@@ -659,7 +665,7 @@
                         if (taskList.find(t => t.taskid == "3") && taskList.find(t => t.taskid == "4") == undefined) {
                             // If Task ID 3 already exists, fetch patient data for Task ID 4
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 4,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.examination?.tgl_perawatan + ' ' + task?.examination?.jam_rawat
@@ -673,7 +679,7 @@
                         if (taskList.find(t => t.taskid == "4") && taskList.find(t => t.taskid == "5") == undefined) {
                             // If Task ID 4 already exists, fetch patient data for Task ID 5
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 5,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.doctor?.tgl_perawatan + ' ' + task?.doctor?.jam_rawat
@@ -687,7 +693,7 @@
                         if (taskList.find(t => t.taskid == "5") && taskList.find(t => t.taskid == "6") == undefined) {
                             // If Task ID 5 already exists, fetch patient data for Task ID 6
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 6,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.prescription?.tgl_perawatan + ' ' + task?.prescription?.jam
@@ -701,7 +707,7 @@
                         if (taskList.find(t => t.taskid == "6") && taskList.find(t => t.taskid == "7") == undefined) {
                             // If Task ID 6 already exists, fetch patient data for Task ID 7
                             taskIdPayload = {
-                                kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                                kodebooking: kodeBooking,
                                 taskid: 7,
                                 // prefer jam_reg; fallback to tgl_registrasi + ' ' + jam_reg or current time
                                 waktu: task?.prescription?.tgl_penyerahan + ' ' + task?.prescription?.jam_penyerahan
@@ -712,10 +718,12 @@
                             return;
                         }
 
+                        console.log('Task id payload before Add Antrean:', taskIdPayload);
+
                         // No SEP found — proceed with Add Antrean flow
                         // Build the add antrean request payload
                         const addAntreanPayload = {
-                            kodebooking: patient.referensi_mobilejkn_bpjs ? patient.referensi_mobilejkn_bpjs.nobooking : patient.no_rawat,
+                            kodebooking: kodeBooking,
                             jenispasien: "JKN",
                             nomorkartu: patient.no_peserta || "",
                             nik: patient.pasien?.no_ktp || "",
@@ -1024,7 +1032,7 @@
                 if (data.success) {
                     // Success - now we can send task ID 3
                     const taskIdPayload = {
-                        kodebooking: payload.kodebooking,
+                        kodebooking: noRawat || payload.kodebooking,
                         taskid: 3,
                         waktu: payload.tanggalperiksa + ' ' + payload.estimasidilayani
                     };
@@ -1109,6 +1117,7 @@
         }
         
         function sendTaskIdRequest(payload) {
+            console.log('Sending task ID request with payload:', payload);
             // Show loading
             document.getElementById('taskIdSendButton').disabled = true;
             document.getElementById('taskIdSendButton').innerHTML = `
