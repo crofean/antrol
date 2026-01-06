@@ -567,7 +567,7 @@
             document.getElementById('taskIdModalTitle').textContent = `Send Task ID ${nextTaskId}`;
             
             // Show the "Send Antrean" button and the automated flow button
-            document.getElementById('showAntreanFormButton').classList.remove('hidden');
+            document.getElementById('showAnt`reanFormButton').classList.remove('hidden');
             if (document.getElementById('taskIdAutoFlowButton')) {
                 document.getElementById('taskIdAutoFlowButton').classList.remove('hidden');
             }
