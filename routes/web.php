@@ -36,6 +36,8 @@ Route::prefix('mobilejkn')->group(function () {
     Route::get('/taskid-logs', [MobileJknController::class, 'taskIdLogs'])->name('taskid.logs');
     Route::get('/run-command', [CommandOutputController::class, 'index'])->name('command.index');
     Route::get('/patient-data', [MobileJknController::class, 'showPatientDataForm'])->name('patient.data');
+    Route::get('/referensi-pendafataran', [MobileJknController::class, 'referensiPendafataran'])->name('referensi.pendafataran');
+    Route::post('/referensi-pendafataran', [MobileJknController::class, 'updateReferensiStatus'])->name('referensi.update-status');
 });
 
 // Command Output Routes

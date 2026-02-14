@@ -19,6 +19,9 @@
                 <a href="{{ route('bpjs-logs.index') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition duration-200">
                     <i class="fas fa-list mr-2"></i>All BPJS Logs
                 </a>
+                <a href="{{ route('referensi.pendafataran') }}" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-md transition duration-200">
+                    <i class="fas fa-file-alt mr-2"></i>Referensi MJKN
+                </a>
             </div>
         </div>
 

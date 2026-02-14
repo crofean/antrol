@@ -50,6 +50,11 @@
                     <span>BPJS Logs</span>
                 </a>
 
+                <a href="{{ route('referensi.pendafataran') }}" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-2">
+                    <i class="fas fa-file-alt"></i>
+                    <span>Referensi MJKN</span>
+                </a>
+
                 <a href="{{ route('command.index') }}" class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-2">
                     <i class="fas fa-terminal"></i>
                     <span>Run BPJS Command</span>

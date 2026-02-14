@@ -80,4 +80,12 @@ class ReferensiMobilejknBpjs extends Model
     {
         return $this->belongsTo(RegPeriksa::class, 'no_rawat', 'no_rawat');
     }
+
+    /**
+     * Get the referensi_mobilejkn_bpjs_taskid for the ReferensiMobilejknBpjs.
+     */
+    public function referensiMobilejknBpjsTaskid()
+    {
+        return $this->hasMany(ReferensiMobilejknBpjsTaskid::class, 'no_rawat', 'no_rawat');
+    }
 }
