@@ -17,6 +17,8 @@ class ReferensiMobilejknBpjs extends Model
 
     protected $keyType = 'string';
 
+    public $timestamps = false;
+
     /**
      * The attributes that are mass assignable.
      *
@@ -64,6 +66,8 @@ class ReferensiMobilejknBpjs extends Model
             'kuotanonjkn' => 'integer',
         ];
     }
+
+
 
     // /**
     //  * Get the pasien that owns the ReferensiMobilejknBpjs.

@@ -357,6 +357,8 @@ class MobileJknController extends Controller
                     $filteredQuery->where('status', $request->status);
                 }
             }
+
+            $filteredCount = $filteredQuery->count();
         }
 
         return view('mobilejkn.referensi-pendafataran', compact('referensis', 'totalReferensi', 'todayReferensi', 'filteredCount', 'request'));
@@ -371,38 +373,45 @@ class MobileJknController extends Controller
     public function updateReferensiStatus(Request $request): JsonResponse
     {
         try {
-            // Get the same query as the GET method to get the current displayed records
-            $query = \App\Models\ReferensiMobilejknBpjs::with(['regPeriksa.pasien']);
+            // If frontend provided explicit list of booking numbers (modal preview), use that
+            $referensiQuery = \App\Models\ReferensiMobilejknBpjs::with(['regPeriksa.pasien']);
 
-            // Apply the same filters as the GET method
-            if ($request->filled('date_from') || $request->filled('date_to')) {
-                if ($request->filled('date_from') && $request->filled('date_to')) {
-                    $query->whereBetween('tanggalperiksa', [$request->date_from, $request->date_to]);
-                } elseif ($request->filled('date_from')) {
-                    $query->whereDate('tanggalperiksa', '>=', $request->date_from);
-                } elseif ($request->filled('date_to')) {
-                    $query->whereDate('tanggalperiksa', '<=', $request->date_to);
+            if ($request->filled('no_booking_list')) {
+                $list = json_decode($request->input('no_booking_list'), true);
+                if (is_array($list) && count($list) > 0) {
+                    $referensiQuery->whereIn('nobooking', $list);
+                }
+            } else {
+                // Apply the same filters as the GET method when list is not provided
+                if ($request->filled('date_from') || $request->filled('date_to')) {
+                    if ($request->filled('date_from') && $request->filled('date_to')) {
+                        $referensiQuery->whereBetween('tanggalperiksa', [$request->date_from, $request->date_to]);
+                    } elseif ($request->filled('date_from')) {
+                        $referensiQuery->whereDate('tanggalperiksa', '>=', $request->date_from);
+                    } elseif ($request->filled('date_to')) {
+                        $referensiQuery->whereDate('tanggalperiksa', '<=', $request->date_to);
+                    }
+                }
+
+                if ($request->filled('no_rawat')) {
+                    $referensiQuery->where('no_rawat', 'like', '%' . $request->no_rawat . '%');
+                }
+
+                if ($request->filled('no_booking')) {
+                    $referensiQuery->where('nobooking', 'like', '%' . $request->no_booking . '%');
+                }
+
+                if ($request->filled('status')) {
+                    if ($request->status === 'belum') {
+                        $referensiQuery->whereNull('status')->orWhere('status', '');
+                    } else {
+                        $referensiQuery->where('status', $request->status);
+                    }
                 }
             }
 
-            if ($request->filled('no_rawat')) {
-                $query->where('no_rawat', 'like', '%' . $request->no_rawat . '%');
-            }
-
-            if ($request->filled('no_booking')) {
-                $query->where('nobooking', 'like', '%' . $request->no_booking . '%');
-            }
-
-            if ($request->filled('status')) {
-                if ($request->status === 'belum') {
-                    $query->whereNull('status')->orWhere('status', '');
-                } else {
-                    $query->where('status', $request->status);
-                }
-            }
-
-            // Get all records that match the current filters (not paginated)
-            $referensis = $query->get();
+            // Get all records that match the selected list or filters (not paginated)
+            $referensis = $referensiQuery->get();
 
             $updatedCount = 0;
             $cancelledCount = 0;
@@ -412,52 +421,40 @@ class MobileJknController extends Controller
 
             foreach ($referensis as $referensi) {
                 try {
-                    $shouldCancel = false;
-                    $shouldCheckin = false;
+                    $regStts = strtolower(trim($referensi->regPeriksa->stts ?? ''));
+                    $newStatus = null;
                     $action = '';
 
-                    // Check reg periksa status
-                    if ($referensi->regPeriksa) {
-                        $regStatus = strtolower($referensi->regPeriksa->status_lanjut ?? '');
-                        if ($regStatus === 'sudah') {
-                            $shouldCheckin = true;
-                            $action = 'Check-in';
-                        } elseif (in_array($regStatus, ['batal', 'belum'])) {
-                            $shouldCancel = true;
-                            $action = 'Batal';
-                        }
+                    if ($regStts === 'sudah' || $regStts === 'berkas diterima') {
+                        $newStatus = 'Checkin';
+                        $action = 'Check-in';
+                        $checkinCount++;
+                    } elseif ($regStts === 'belum' || $regStts === 'batal') {
+                        $newStatus = 'Batal';
+                        $action = 'Batal';
+                        $cancelledCount++;
                     } else {
-                        // If no reg periksa found, treat as belum/batal
-                        $shouldCancel = true;
-                        $action = 'Batal (no Reg Periksa)';
+                        // skip if other status
+                        continue;
                     }
 
-                    // Update status and timestamp
                     $oldStatus = $referensi->status;
-                    $newStatus = $shouldCancel ? '0' : '1';
 
                     $referensi->update([
                         'status' => $newStatus,
                         'validasi' => now(),
                     ]);
 
-                    if ($shouldCancel) {
-                        $cancelledCount++;
-                    } elseif ($shouldCheckin) {
-                        $checkinCount++;
-                    }
-
                     $updatedCount++;
 
-                    // Track updated records
                     $updatedRecords[] = [
-                        'nobooking' => $referensi->nobooking,
+                        'no_booking' => $referensi->nobooking,
                         'no_rawat' => $referensi->no_rawat,
-                        'pasien' => $referensi->regPeriksa->pasien->nm_pasien ?? '-',
+                        'nm_pasien' => $referensi->regPeriksa->pasien->nm_pasien ?? '-',
                         'old_status' => $oldStatus,
                         'new_status' => $newStatus,
                         'action' => $action,
-                        'reg_status' => $referensi->regPeriksa->status_lanjut ?? 'N/A'
+                        'reg_status' => $referensi->regPeriksa->stts ?? 'N/A'
                     ];
 
                 } catch (\Exception $e) {
@@ -479,9 +476,9 @@ class MobileJknController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => $message,
-                'updated' => $updatedCount,
-                'checkin' => $checkinCount,
-                'cancelled' => $cancelledCount,
+                'updated_count' => $updatedCount,
+                'checkin_count' => $checkinCount,
+                'cancelled_count' => $cancelledCount,
                 'errors' => $errors,
                 'updated_records' => $updatedRecords
             ]);

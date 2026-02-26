@@ -264,7 +264,7 @@
 
             <div class="mb-4">
                 <p class="text-sm text-gray-600 mb-4">
-                    Akan mengupdate status untuk <strong>{{ $referensis->total() }}</strong> data yang ditampilkan.
+                    Akan mengupdate status untuk <strong>{{ count($referensis) }}</strong> data yang ditampilkan.
                     Status akan diupdate berdasarkan status Reg Periksa:
                 </p>
                 <ul class="text-sm text-gray-600 mb-4 space-y-1">
@@ -371,7 +371,7 @@
     }
 
     function updateStatus() {
-        if (confirm('Apakah Anda yakin ingin mengupdate status untuk {{ $referensis->total() }} data yang ditampilkan?')) {
+        if (confirm('Apakah Anda yakin ingin mengupdate status untuk {{ count($referensis) }} data yang ditampilkan?')) {
             // Create form data with current filters
             const formData = new FormData();
             formData.append('_token', '{{ csrf_token() }}');
@@ -392,6 +392,13 @@
             @if($request->status)
                 formData.append('status', '{{ $request->status }}');
             @endif
+
+            // Collect all displayed no_booking values from the modal preview table
+            const noBookingList = Array.from(document.querySelectorAll('#statusUpdateModal tbody tr')).map(row => {
+                const cell = row.querySelector('td');
+                return cell ? cell.textContent.trim() : null;
+            }).filter(Boolean);
+            formData.append('no_booking_list', JSON.stringify(noBookingList));
 
             // Show loading
             const updateBtn = document.querySelector('#statusUpdateModal button:last-child');
@@ -422,7 +429,7 @@
                     }
 
                     alert(message);
-                    location.reload();
+                    // location.reload();
                 } else {
                     alert('Error: ' + (data.message || 'Terjadi kesalahan'));
                 }
