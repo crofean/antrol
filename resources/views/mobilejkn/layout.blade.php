@@ -47,7 +47,7 @@
 
     <footer class="bg-white py-4 mt-8 border-t">
         <div class="container mx-auto px-4 text-center text-gray-500 text-sm">
-            &copy; {{ date('Y') }} Mobile JKN Integration Service
+            &copy; {{ date('Y') }} Antrol System
         </div>
     </footer>
 

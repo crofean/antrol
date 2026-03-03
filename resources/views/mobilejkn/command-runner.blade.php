@@ -1,242 +1,196 @@
-@extends('mobilejkn.layout')
+@extends('layouts.main')
+
+@section('title', 'Run Command')
 
 @section('content')
-<div class="container mx-auto px-4 py-6">
-    <h1 class="text-2xl font-bold mb-6">Run BPJS Task ID Command</h1>
-    
-    <div id="queueHelperAlert" class="bg-yellow-100 border-l-4 border-yellow-500 p-4 mb-6 hidden">
-        <div class="flex items-start">
-            <div class="flex-shrink-0">
-                <svg class="h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                </svg>
-            </div>
-            <div class="ml-3">
-                <p class="text-sm text-yellow-700">
-                    <strong>Queue workers might not be running.</strong> If your command stays in "pending" state, you may need to start queue workers.
-                </p>
-                <p class="text-sm text-yellow-700 mt-2">
-                    Run this command in your terminal: <code class="bg-gray-100 px-2 py-1 rounded">php artisan queue:work</code>
+<div class="max-w-7xl mx-auto px-6 py-12">
+    <!-- Header -->
+    <div class="glass rounded-3xl p-8 mb-8 space-y-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div>
+                <h1 class="text-4xl font-bold tracking-tight text-slate-900 dark:text-white">Batch Processor</h1>
+                <p class="text-slate-500 dark:text-slate-400 mt-2 flex items-center">
+                    <i class="fas fa-terminal mr-2 text-amber-600"></i>
+                    Execute automated Task ID sequences for specific date ranges
                 </p>
             </div>
+            
+            <a href="{{ route('regperiksa.index') }}"
+               class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
+                <i class="fas fa-arrow-left mr-2"></i>Back to Patients
+            </a>
         </div>
     </div>
-    
-    <div class="bg-white rounded-lg shadow-md p-6">
-        <form id="commandForm" class="mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label for="date_from" class="block text-sm font-medium text-gray-700 mb-1">Date From</label>
-                    <input type="date" id="date_from" name="date_from" 
-                        class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+
+    <!-- Main Tool -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="lg:col-span-1">
+            <div class="glass rounded-3xl p-8 shadow-sm space-y-8">
+                <h3 class="text-xl font-bold flex items-center">
+                    <i class="fas fa-cog mr-3 text-amber-500"></i> Configuration
+                </h3>
+
+                <!-- Queue Alert -->
+                <div id="queueHelperAlert" class="hidden p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/20">
+                    <div class="flex gap-3">
+                        <i class="fas fa-exclamation-triangle text-amber-600 mt-1"></i>
+                        <div class="text-[11px] text-amber-800 dark:text-amber-400 font-medium">
+                            <strong>Queue workers might not be running.</strong> 
+                            Run <code class="bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">php artisan queue:work</code> in terminal.
+                        </div>
+                    </div>
                 </div>
-                
-                <div>
-                    <label for="date_to" class="block text-sm font-medium text-gray-700 mb-1">Date To</label>
-                    <input type="date" id="date_to" name="date_to" 
-                        class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                </div>
-            </div>
-            
-            <div class="mt-4">
-                <div class="flex items-center">
-                    <input type="checkbox" id="dry_run" name="dry_run" class="h-4 w-4 text-blue-600 focus:ring-blue-500">
-                    <label for="dry_run" class="ml-2 block text-sm text-gray-700">Dry Run Mode (✓ = simulate only, ✗ = make real API calls)</label>
-                </div>
-            </div>
-            
-            <div class="mt-6 flex justify-end">
-                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
-                    Run Command
-                </button>
-            </div>
-        </form>
-        
-        <div id="statusArea" class="hidden bg-gray-100 p-4 rounded-md mb-4">
-            <div class="flex items-center justify-between">
-                <div class="flex items-center">
-                    <div id="statusIndicator" class="w-4 h-4 rounded-full bg-yellow-500 mr-2"></div>
-                    <span id="statusText" class="text-sm font-medium">Running...</span>
-                </div>
-                <button id="stopButton" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm rounded-md">
-                    Stop Command
-                </button>
+
+                <form id="commandForm" class="space-y-6">
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Date From</label>
+                        <input type="date" id="date_from" name="date_from" value="{{ date('Y-m-d') }}"
+                               class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-5 py-3 font-semibold text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none transition-all">
+                    </div>
+                    
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Date To</label>
+                        <input type="date" id="date_to" name="date_to" value="{{ date('Y-m-d') }}"
+                               class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-5 py-3 font-semibold text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none transition-all">
+                    </div>
+
+                    <div class="flex items-center gap-3 p-4 glass rounded-2xl">
+                        <div class="relative inline-flex h-6 w-11 items-center rounded-full bg-slate-200 dark:bg-slate-800 transition-colors pointer-events-none">
+                            <input type="checkbox" id="dry_run" name="dry_run" checked class="sr-only peer pointer-events-auto">
+                            <div class="peer-checked:bg-amber-600 absolute inset-0 rounded-full transition-colors"></div>
+                            <span class="absolute left-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5 shadow-sm"></span>
+                        </div>
+                        <label for="dry_run" class="text-xs font-bold text-slate-500 cursor-pointer">Dry Run Mode</label>
+                    </div>
+
+                    <button type="submit" class="w-full bg-slate-900 dark:bg-white dark:text-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:opacity-90 shadow-xl transition-all">
+                        Execute Sequence
+                    </button>
+                </form>
             </div>
         </div>
-        
-        <div id="outputContainer" class="hidden">
-            <h3 class="text-lg font-medium mb-2">Command Output</h3>
-            <div id="outputArea" class="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-96 overflow-y-auto whitespace-pre"></div>
+
+        <!-- Terminal Output -->
+        <div class="lg:col-span-2">
+            <div class="glass h-[600px] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border-slate-900/5 dark:border-white/5">
+                <div class="px-8 py-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-900">
+                    <div class="flex items-center gap-3">
+                        <div id="statusIndicator" class="w-2.5 h-2.5 rounded-full bg-slate-700"></div>
+                        <span id="statusText" class="text-[10px] font-black uppercase tracking-widest text-slate-400">Terminal Offline</span>
+                    </div>
+                    <button id="stopButton" class="hidden px-4 py-1.5 rounded-lg bg-rose-500 text-white text-[10px] font-bold uppercase transition-all hover:bg-rose-600">
+                        Kill Process
+                    </button>
+                </div>
+                
+                <div id="outputArea" class="flex-grow bg-slate-900 p-8 font-mono text-[11px] leading-relaxed text-emerald-500/90 overflow-y-auto whitespace-pre-wrap selection:bg-emerald-500/20">
+                    <div class="text-slate-500 italic flex flex-col items-center justify-center h-full space-y-4">
+                        <i class="fas fa-terminal text-4xl opacity-10"></i>
+                        <span>Waiting for command execution...</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+@endsection
 
 @push('scripts')
 <script>
     let jobId = null;
     let outputInterval = null;
     
-    // Add stop button event listener
-    document.getElementById('stopButton').addEventListener('click', function() {
-        if (!jobId) return;
-        
-        // Show stopping message
-        document.getElementById('outputArea').textContent += '\n\nStopping command...\n';
-        document.getElementById('statusText').textContent = 'Stopping...';
-        document.getElementById('statusIndicator').className = 'w-4 h-4 rounded-full bg-orange-500 mr-2';
-        
-        // Send request to stop the command
-        fetch(`{{ route('command.stop') }}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': '{{ csrf_token() }}'
-            },
-            body: JSON.stringify({
-                job_id: jobId
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('outputArea').textContent += 'Command stopped successfully.\n';
-                updateStatus('stopped');
-                clearInterval(outputInterval);
-            } else {
-                document.getElementById('outputArea').textContent += `Failed to stop command: ${data.message}\n`;
-            }
-        })
-        .catch(error => {
-            document.getElementById('outputArea').textContent += `Error stopping command: ${error.message}\n`;
-        });
-    });
-    
-    document.getElementById('commandForm').addEventListener('submit', function(e) {
+    document.getElementById('commandForm').onsubmit = (e) => {
         e.preventDefault();
         
-        // Get form values
-        const dateFrom = document.getElementById('date_from').value;
-        const dateTo = document.getElementById('date_to').value;
-        const dryRun = document.getElementById('dry_run').checked;
+        const payload = {
+            date_from: document.getElementById('date_from').value,
+            date_to: document.getElementById('date_to').value,
+            dry_run: document.getElementById('dry_run').checked
+        };
         
-        // Show status area
-        document.getElementById('statusArea').classList.remove('hidden');
-        document.getElementById('outputContainer').classList.remove('hidden');
-        document.getElementById('outputArea').textContent = 'Starting command...\n';
+        const output = document.getElementById('outputArea');
+        output.innerHTML = `<span class="text-white font-bold animate-pulse">Initializing pipeline...</span>\n\n`;
         
-        // Send request to run command
+        document.getElementById('stopButton').classList.remove('hidden');
+        updateStatus('running');
+
         fetch('{{ route("command.run") }}', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': '{{ csrf_token() }}'
-            },
-            body: JSON.stringify({
-                date_from: dateFrom,
-                date_to: dateTo,
-                dry_run: dryRun
-            })
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
+            body: JSON.stringify(payload)
         })
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
             jobId = data.job_id;
-            
-            // Start polling for output
             outputInterval = setInterval(fetchOutput, 1000);
-            
-            // Show queue information if available
-            if (data.queue_info && data.queue_info.message) {
-                document.getElementById('outputArea').textContent += 'Queue information: ' + data.queue_info.message + '\n';
-            }
+            if (data.queue_info?.message) output.innerHTML += `<span class="text-blue-400">[info]</span> ${data.queue_info.message}\n`;
         })
-        .catch(error => {
-            document.getElementById('outputArea').textContent += 'Error: ' + error.message + '\n';
+        .catch(err => {
+            output.innerHTML += `<span class="text-rose-500">[error]</span> Failed to start sync engine.\n`;
             updateStatus('failed');
         });
-    });
-    
+    };
+
     function fetchOutput() {
         if (!jobId) return;
         
-        console.log('Fetching output for job:', jobId);
-        
         fetch(`{{ route('command.output', ['jobId' => ':jobId']) }}`.replace(':jobId', jobId))
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Network response error: ${response.status} ${response.statusText}`);
-                }
-                return response.json();
-            })
+            .then(r => r.json())
             .then(data => {
-                console.log('Received data:', data);
+                const area = document.getElementById('outputArea');
                 
-                // Update output area with all lines
-                const outputArea = document.getElementById('outputArea');
-                outputArea.textContent = '';
-                
-                if (data.output && data.output.length > 0) {
-                    data.output.forEach(line => {
-                        outputArea.textContent += line;
-                    });
+                // Colorize the output
+                if (data.output) {
+                    area.textContent = data.output.join('').replace(/✓/g, '✔').replace(/✗/g, '✘');
+                    area.scrollTop = area.scrollHeight;
                 }
-                
-                // Scroll to bottom
-                outputArea.scrollTop = outputArea.scrollHeight;
-                
-                // Update status based on job status
-                if (data.status === 'running') {
-                    updateStatus('running');
-                } else if (data.status === 'completed') {
+
+                if (data.status === 'completed') {
                     updateStatus('completed');
                     clearInterval(outputInterval);
-                    
-                    // Add exit code info
-                    if (data.exit_code !== undefined) {
-                        outputArea.textContent += `\n\nCommand completed with exit code: ${data.exit_code}`;
-                    }
+                    document.getElementById('stopButton').classList.add('hidden');
                 } else if (data.status === 'failed') {
                     updateStatus('failed');
-                    outputArea.textContent += '\nError: ' + (data.error || 'Unknown error');
                     clearInterval(outputInterval);
                 } else if (data.status === 'stopped') {
                     updateStatus('stopped');
                     clearInterval(outputInterval);
-                } else if (data.status === 'pending' || data.status === 'initializing') {
-                    // Still in pending state, show this in the UI
-                    document.getElementById('statusText').textContent = 'Pending...';
-                    
-                    // Check if we have queue status information
-                    if (data.queue_status && data.queue_status.queue_status === 'no_workers') {
-                        // Show the queue helper alert
-                        document.getElementById('queueHelperAlert').classList.remove('hidden');
-                    }
                 }
-            })
-            .catch(error => {
-                console.error('Error fetching output:', error);
-                document.getElementById('outputArea').textContent += `\nError fetching output: ${error.message}\n`;
-                // Don't stop polling on temporary errors
+
+                if (data.queue_status?.queue_status === 'no_workers') {
+                    document.getElementById('queueHelperAlert').classList.remove('hidden');
+                }
             });
     }
-    
-    function updateStatus(status) {
-        const indicator = document.getElementById('statusIndicator');
-        const text = document.getElementById('statusText');
+
+    function updateStatus(stts) {
+        const ind = document.getElementById('statusIndicator');
+        const txt = document.getElementById('statusText');
+        const colors = {
+            running: 'bg-amber-500 animate-pulse',
+            completed: 'bg-emerald-500',
+            failed: 'bg-rose-500',
+            stopped: 'bg-slate-500'
+        };
+        const labels = {
+            running: 'Processing Batch',
+            completed: 'Sync Finished',
+            failed: 'Process Halted',
+            stopped: 'Process Killed'
+        };
         
-        if (status === 'running') {
-            indicator.className = 'w-4 h-4 rounded-full bg-yellow-500 mr-2';
-            text.textContent = 'Running...';
-        } else if (status === 'completed') {
-            indicator.className = 'w-4 h-4 rounded-full bg-green-500 mr-2';
-            text.textContent = 'Completed';
-        } else if (status === 'failed') {
-            indicator.className = 'w-4 h-4 rounded-full bg-red-500 mr-2';
-            text.textContent = 'Failed';
-        } else if (status === 'stopped') {
-            indicator.className = 'w-4 h-4 rounded-full bg-orange-500 mr-2';
-            text.textContent = 'Stopped';
-        }
+        ind.className = `w-2.5 h-2.5 rounded-full ${colors[stts]}`;
+        txt.textContent = labels[stts];
     }
+
+    document.getElementById('stopButton').onclick = () => {
+        if (!jobId) return;
+        fetch(`{{ route('command.stop') }}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
+            body: JSON.stringify({ job_id: jobId })
+        });
+    };
 </script>
 @endpush
-@endsection

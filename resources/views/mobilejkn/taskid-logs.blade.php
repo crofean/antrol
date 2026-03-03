@@ -1,640 +1,319 @@
-@extends('mobilejkn.layout')
+@extends('layouts.main')
+
+@section('title', 'Task ID Logs')
 
 @section('content')
-<div class="container mx-auto px-4 py-8">
+<div class="max-w-7xl mx-auto px-6 py-12">
     <!-- Header -->
-    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div class="flex justify-between items-center mb-4">
+    <div class="glass rounded-3xl p-8 mb-8 space-y-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div>
-                <h1 class="text-3xl font-bold text-gray-800">Mobile JKN Task ID Logs</h1>
-                <p class="text-gray-600 mt-1">Monitor and track BPJS Task ID updates and antrean additions</p>
+                <h1 class="text-4xl font-bold tracking-tight text-slate-900 dark:text-white">Task ID Tracking</h1>
+                <p class="text-slate-500 dark:text-slate-400 mt-2 flex items-center">
+                    <i class="fas fa-microchip mr-2 text-indigo-600"></i>
+                    Monitor and track BPJS Task ID updates and antrean additions
+                </p>
             </div>
-            <div class="flex space-x-4">
-                <a href="{{ route('regperiksa.index') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition duration-200">
+            
+            <div class="flex flex-wrap gap-3">
+                <a href="{{ route('regperiksa.index') }}"
+                   class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
                     <i class="fas fa-arrow-left mr-2"></i>Back to Patients
                 </a>
-                <a href="{{ route('command.index') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition duration-200">
-                    <i class="fas fa-play mr-2"></i>Run Command
-                </a>
-                <a href="{{ route('bpjs-logs.index') }}" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition duration-200">
-                    <i class="fas fa-list mr-2"></i>All BPJS Logs
-                </a>
-                <a href="{{ route('referensi.pendafataran') }}" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-md transition duration-200">
+                <a href="{{ route('referensi.pendafataran') }}"
+                    class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
                     <i class="fas fa-file-alt mr-2"></i>Referensi MJKN
                 </a>
-            </div>
-        </div>
-
-            <!-- Statistics -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div class="bg-blue-50 p-4 rounded-lg">
-                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Task ID Updates</h3>
-                    <div class="grid grid-cols-3 gap-2">
-                        <div class="bg-green-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Success</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $successCount }}</p>
-                        </div>
-                        <div class="bg-red-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Failed</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $errorCount }}</p>
-                        </div>
-                        <div class="bg-blue-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Total</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $totalCount }}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="bg-purple-50 p-4 rounded-lg">
-                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Antrean Additions</h3>
-                    <div class="grid grid-cols-3 gap-2">
-                        <div class="bg-green-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Success</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $antreanSuccessCount }}</p>
-                        </div>
-                        <div class="bg-red-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Failed</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $antreanErrorCount }}</p>
-                        </div>
-                        <div class="bg-blue-50 p-3 rounded-lg text-center">
-                            <p class="text-sm font-medium text-gray-600">Total</p>
-                            <p class="text-xl font-bold text-gray-800">{{ $antreanTotalCount }}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="bg-yellow-50 p-4 rounded-lg">
-                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Date Filter</h3>
-                    <div class="flex space-x-2">
-                        <div class="w-1/2">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-                            <input type="date" id="startDate" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                        </div>
-                        <div class="w-1/2">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-                            <input type="date" id="endDate" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                        </div>
-                    </div>
-                    <div class="mt-2 text-center">
-                        <button id="filterBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-md transition duration-200">
-                            <i class="fas fa-filter mr-2"></i>Apply Filter
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Navigation -->
-        <div class="bg-white rounded-lg shadow-md p-4 mb-6">
-            <div class="flex border-b border-gray-200">
-                <button class="tab-btn active py-2 px-4 text-blue-600 border-b-2 border-blue-600 font-medium" data-tab="taskid">
-                    Task ID Updates
-                </button>
-                <button class="tab-btn py-2 px-4 text-gray-600 hover:text-gray-800 font-medium" data-tab="antrean">
-                    Antrean Additions
-                </button>
-            </div>
-        </div>
-
-        <!-- Task ID Logs Table -->
-        <div id="taskid-tab" class="tab-content bg-white rounded-lg shadow-md">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                <h2 class="text-xl font-semibold text-gray-800">Task ID Update Logs</h2>
-                <div class="flex items-center space-x-2">
-                    <label for="taskid-per-page" class="text-sm text-gray-600">Rows:</label>
-                    <select id="taskid-per-page" class="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Booking Code</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task ID</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Response</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="taskid-logs-body" class="bg-white divide-y divide-gray-200">
-                        <!-- Task ID logs will be loaded here via JavaScript -->
-                        <tr>
-                            <td colspan="6" class="px-6 py-4 text-center text-gray-500">Loading logs...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            
-            <div id="taskid-pagination" class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <!-- Pagination will be added here via JavaScript -->
-                <div class="text-sm text-gray-700">
-                    Showing <span id="taskid-showing-start">0</span> to <span id="taskid-showing-end">0</span> of <span id="taskid-total-items">0</span> results
-                </div>
-                <div class="flex space-x-2">
-                    <button id="taskid-prev-page" class="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50">
-                        Previous
-                    </button>
-                    <button id="taskid-next-page" class="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50">
-                        Next
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Antrean Logs Table -->
-        <div id="antrean-tab" class="tab-content bg-white rounded-lg shadow-md hidden">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                <h2 class="text-xl font-semibold text-gray-800">Antrean Addition Logs</h2>
-                <div class="flex items-center space-x-2">
-                    <label for="antrean-per-page" class="text-sm text-gray-600">Rows:</label>
-                    <select id="antrean-per-page" class="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Booking Code</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Patient Name</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Response</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="antrean-logs-body" class="bg-white divide-y divide-gray-200">
-                        <!-- Antrean logs will be loaded here via JavaScript -->
-                        <tr>
-                            <td colspan="6" class="px-6 py-4 text-center text-gray-500">Loading logs...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            
-            <div id="antrean-pagination" class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <!-- Pagination will be added here via JavaScript -->
-                <div class="text-sm text-gray-700">
-                    Showing <span id="antrean-showing-start">0</span> to <span id="antrean-showing-end">0</span> of <span id="antrean-total-items">0</span> results
-                </div>
-                <div class="flex space-x-2">
-                    <button id="antrean-prev-page" class="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50">
-                        Previous
-                    </button>
-                    <button id="antrean-next-page" class="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50">
-                        Next
-                    </button>
-                </div>
+                <a href="{{ route('bpjs-logs.index') }}"
+                    class="bg-rose-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-rose-700 transition-all shadow-lg shadow-rose-500/20 flex items-center">
+                    <i class="fas fa-list mr-2"></i>BPJS Logs
+                </a>
             </div>
         </div>
     </div>
 
-    <!-- Log Details Modal -->
-    <div id="logModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-lg max-w-5xl w-full mx-4">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                <h3 class="text-lg font-semibold text-gray-800">Log Details</h3>
-                <button id="closeModal" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="p-6">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <div>
-                        <h4 class="font-semibold text-gray-700 mb-2">Request</h4>
-                        <pre id="modalRequest" class="bg-gray-100 p-4 rounded-md overflow-x-auto text-sm"></pre>
+    <!-- Statistics Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Task Updates Stats -->
+        <div class="lg:col-span-1 space-y-4">
+             <div class="glass p-6 rounded-3xl border-indigo-500/10 bg-indigo-500/5">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Task ID Updates</p>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">Success</span>
+                        <span class="font-bold text-emerald-500 text-lg">{{ $successCount }}</span>
                     </div>
-                    <div>
-                        <h4 class="font-semibold text-gray-700 mb-2">Response</h4>
-                        <pre id="modalResponse" class="bg-gray-100 p-4 rounded-md overflow-x-auto text-sm"></pre>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">Failed</span>
+                        <span class="font-bold text-rose-500 text-lg">{{ $errorCount }}</span>
                     </div>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <p><span class="font-semibold">Time:</span> <span id="modalTime"></span></p>
-                        <p><span class="font-semibold">URL:</span> <span id="modalUrl" class="break-all"></span></p>
-                        <p><span class="font-semibold">Method:</span> <span id="modalMethod"></span></p>
-                    </div>
-                    <div>
-                        <p><span class="font-semibold">Status Code:</span> <span id="modalCode"></span></p>
-                        <p><span class="font-semibold">Booking Code:</span> <span id="modalBookingCode"></span></p>
-                        <p id="modalTaskIdContainer"><span class="font-semibold">Task ID:</span> <span id="modalTaskId"></span></p>
+                    <div class="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                        <span class="font-bold text-slate-700 dark:text-slate-300">Total</span>
+                        <span class="font-black text-indigo-600 text-xl">{{ $totalCount }}</span>
                     </div>
                 </div>
-            </div>
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
-                <button id="closeModalBtn" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition duration-200">Close</button>
+             </div>
+
+             <div class="glass p-6 rounded-3xl border-blue-500/10 bg-blue-500/5">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">Antrean Additions</p>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">Success</span>
+                        <span class="font-bold text-emerald-500 text-lg">{{ $antreanSuccessCount }}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">Failed</span>
+                        <span class="font-bold text-rose-500 text-lg">{{ $antreanErrorCount }}</span>
+                    </div>
+                    <div class="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                        <span class="font-bold text-slate-700 dark:text-slate-300">Total</span>
+                        <span class="font-black text-blue-600 text-xl">{{ $antreanTotalCount }}</span>
+                    </div>
+                </div>
+             </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="lg:col-span-3">
+            <div class="glass rounded-3xl shadow-sm overflow-hidden flex flex-col h-full">
+                <div class="px-8 py-6 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div class="flex items-center gap-4">
+                        <button class="px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white transition-all shadow-md" data-tab="taskid">Task Updates</button>
+                        <button class="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 transition-all" data-tab="antrean">Antrean Records</button>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                         <input type="date" id="startDate" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 text-xs outline-none">
+                         <input type="date" id="endDate" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 text-xs outline-none">
+                         <button id="filterBtn" class="bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold hover:opacity-90">Filter</button>
+                    </div>
+                </div>
+
+                <!-- Table Container (Task ID) -->
+                <div id="taskid-tab" class="tab-content flex-grow overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50/30 dark:bg-slate-800/20">
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Timestamp</th>
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Booking Code</th>
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Task</th>
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Response</th>
+                                <th class="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="taskid-logs-body" class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <!-- JS Inject -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination Placeholder -->
+                <div class="px-8 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-center">
+                    <span class="text-xs font-medium text-slate-400" id="taskid-showing-text">Showing 0 to 0 of 0</span>
+                    <div class="flex gap-2">
+                        <button id="taskid-prev-page" class="glass px-3 py-1 text-xs font-bold rounded-lg border-none hover:bg-slate-100 transition-all">Prev</button>
+                        <button id="taskid-next-page" class="glass px-3 py-1 text-xs font-bold rounded-lg border-none hover:bg-slate-100 transition-all">Next</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        // Global variables
-        const state = {
-            taskId: {
-                page: 1,
-                perPage: 25,
-                startDate: null,
-                endDate: null
-            },
-            antrean: {
-                page: 1,
-                perPage: 25,
-                startDate: null,
-                endDate: null
-            }
+<!-- Log Details Modal -->
+<div id="logModal" class="fixed inset-0 z-[60] hidden">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="glass w-full max-w-5xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-10 py-8 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-indigo-600/5">
+                <div>
+                     <h3 class="text-2xl font-bold tracking-tight text-indigo-600 dark:text-indigo-400">Transmission Detail</h3>
+                     <p class="text-sm text-slate-500 mt-1" id="modalBookingLabel">Booking Code: ---</p>
+                </div>
+                <button id="closeModal" class="w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-none">
+                    <i class="fas fa-times text-slate-400"></i>
+                </button>
+            </div>
+            
+            <div class="p-10 overflow-y-auto space-y-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                     <div class="space-y-3">
+                         <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Request Payload</label>
+                         <pre id="modalRequest" class="bg-white/50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs font-mono leading-relaxed overflow-x-auto"></pre>
+                     </div>
+                     <div class="space-y-3">
+                         <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">API Response</label>
+                         <pre id="modalResponse" class="bg-white/50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs font-mono leading-relaxed overflow-x-auto"></pre>
+                     </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 pt-6 border-t border-slate-100 dark:border-slate-800">
+                    <div class="glass p-4 rounded-2xl text-center">
+                        <p class="text-[9px] uppercase font-bold text-slate-400 mb-1">Status Code</p>
+                        <p class="font-bold text-indigo-600" id="modalCode">---</p>
+                    </div>
+                    <div class="glass p-4 rounded-2xl text-center">
+                        <p class="text-[9px] uppercase font-bold text-slate-400 mb-1">Method</p>
+                        <p class="font-bold text-slate-600" id="modalMethod">---</p>
+                    </div>
+                    <div class="glass p-4 rounded-2xl text-center">
+                        <p class="text-[9px] uppercase font-bold text-slate-400 mb-1">Task Level</p>
+                        <p class="font-bold text-slate-600" id="modalTaskId">---</p>
+                    </div>
+                     <div class="glass p-4 rounded-2xl text-center">
+                        <p class="text-[9px] uppercase font-bold text-slate-400 mb-1">Clocked At</p>
+                        <p class="font-bold text-slate-600 text-[10px]" id="modalTime">---</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-10 py-8 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3 bg-slate-50/50 dark:bg-slate-900/50">
+                 <button id="closeModalBtn" class="glass px-6 py-3 rounded-2xl text-sm font-bold text-slate-500 hover:bg-white transition-all">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+@endsection
+
+@push('scripts')
+<script>
+    // Global State
+    const state = {
+        currentTab: 'taskid',
+        taskid: { page: 1, perPage: 25, startDate: null, endDate: null },
+        antrean: { page: 1, perPage: 25, startDate: null, endDate: null }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initTabs();
+        loadLogs();
+        setupFilters();
+        setupModalEvents();
+    });
+
+    function initTabs() {
+        const btns = document.querySelectorAll('[data-tab]');
+        btns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                state.currentTab = tab;
+                
+                // Update UI
+                btns.forEach(b => {
+                    b.classList.remove('bg-indigo-600', 'text-white', 'shadow-md');
+                    b.classList.add('text-slate-500', 'hover:bg-slate-100');
+                });
+                btn.classList.add('bg-indigo-600', 'text-white', 'shadow-md');
+                btn.classList.remove('text-slate-500', 'hover:bg-slate-100');
+                
+                loadLogs();
+            });
+        });
+    }
+
+    function setupFilters() {
+        document.getElementById('filterBtn').onclick = () => {
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            state[state.currentTab].startDate = start;
+            state[state.currentTab].endDate = end;
+            state[state.currentTab].page = 1;
+            loadLogs();
         };
 
-        // Tab navigation
-        document.addEventListener('DOMContentLoaded', function() {
-            const tabBtns = document.querySelectorAll('.tab-btn');
-            const tabContents = document.querySelectorAll('.tab-content');
-            
-            tabBtns.forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const tabId = this.dataset.tab;
-                    
-                    // Toggle active class for tabs
-                    tabBtns.forEach(btn => btn.classList.remove('active', 'text-blue-600', 'border-b-2', 'border-blue-600'));
-                    tabBtns.forEach(btn => btn.classList.add('text-gray-600'));
-                    this.classList.add('active', 'text-blue-600', 'border-b-2', 'border-blue-600');
-                    
-                    // Show/hide tab content
-                    tabContents.forEach(content => {
-                        content.classList.add('hidden');
-                        if (content.id === tabId + '-tab') {
-                            content.classList.remove('hidden');
-                        }
-                    });
-                });
-            });
+        document.getElementById('taskid-prev-page').onclick = () => { if(state.taskid.page > 1) { state.taskid.page--; loadLogs(); } };
+        document.getElementById('taskid-next-page').onclick = () => { state.taskid.page++; loadLogs(); };
+    }
 
-            // Initialize with task ID logs
-            loadTaskIdLogs();
-            setupEventListeners();
+    function loadLogs() {
+        const tab = state.currentTab;
+        const tbody = document.getElementById('taskid-logs-body');
+        
+        tbody.innerHTML = `<tr><td colspan="6" class="py-20 text-center"><div class="inline-block w-8 h-8 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin"></div></td></tr>`;
+        
+        let url = `/api/mobilejkn/${tab == 'taskid' ? 'task-id-logs' : 'antrean-logs'}?page=${state[tab].page}&perPage=${state[tab].perPage}`;
+        if(state[tab].startDate && state[tab].endDate && tab == 'taskid') {
+             url = `/api/mobilejkn/filtered-task-id-logs?startDate=${state[tab].startDate}&endDate=${state[tab].endDate}&page=${state[tab].page}&perPage=${state[tab].perPage}`;
+        }
+
+        axios.get(url).then(res => {
+            renderLogs(res.data);
+            updatePaginationInfo(res.data);
+        }).catch(e => {
+            tbody.innerHTML = `<tr><td colspan="6" class="py-20 text-center text-rose-500 font-bold">Failed to connect to monitoring service</td></tr>`;
         });
+    }
 
-        function setupEventListeners() {
-            // Per page change events
-            document.getElementById('taskid-per-page').addEventListener('change', function() {
-                state.taskId.perPage = this.value;
-                state.taskId.page = 1;
-                loadTaskIdLogs();
-            });
-
-            document.getElementById('antrean-per-page').addEventListener('change', function() {
-                state.antrean.perPage = this.value;
-                state.antrean.page = 1;
-                loadAntreanLogs();
-            });
-
-            // Pagination events
-            document.getElementById('taskid-prev-page').addEventListener('click', function() {
-                if (state.taskId.page > 1) {
-                    state.taskId.page--;
-                    loadTaskIdLogs();
-                }
-            });
-
-            document.getElementById('taskid-next-page').addEventListener('click', function() {
-                state.taskId.page++;
-                loadTaskIdLogs();
-            });
-
-            document.getElementById('antrean-prev-page').addEventListener('click', function() {
-                if (state.antrean.page > 1) {
-                    state.antrean.page--;
-                    loadAntreanLogs();
-                }
-            });
-
-            document.getElementById('antrean-next-page').addEventListener('click', function() {
-                state.antrean.page++;
-                loadAntreanLogs();
-            });
-
-            // Date filter events
-            document.getElementById('filterBtn').addEventListener('click', function() {
-                state.taskId.startDate = document.getElementById('startDate').value;
-                state.taskId.endDate = document.getElementById('endDate').value;
-                state.taskId.page = 1;
-                
-                state.antrean.startDate = document.getElementById('startDate').value;
-                state.antrean.endDate = document.getElementById('endDate').value;
-                state.antrean.page = 1;
-                
-                // Reload current tab
-                if (!document.getElementById('antrean-tab').classList.contains('hidden')) {
-                    loadAntreanLogs();
-                } else {
-                    loadTaskIdLogs();
-                }
-            });
-
-            // Modal close events
-            document.getElementById('closeModal').addEventListener('click', closeModal);
-            document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-            
-            // Tab click events
-            document.querySelector('[data-tab="antrean"]').addEventListener('click', function() {
-                if (document.getElementById('antrean-logs-body').innerHTML.includes('Loading logs...')) {
-                    loadAntreanLogs();
-                }
-            });
+    function renderLogs(data) {
+        const tbody = document.getElementById('taskid-logs-body');
+        tbody.innerHTML = '';
+        
+        if(!data.data || data.data.length == 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="py-20 text-center text-slate-400">No transmission logs found</td></tr>`;
+            return;
         }
 
-        function loadTaskIdLogs() {
-            const tbody = document.getElementById('taskid-logs-body');
-            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading logs...</td></tr>';
+        data.data.forEach(log => {
+            const req = tryParse(log.request);
+            const res = tryParse(log.message);
+            const isSuccess = log.code >= 200 && log.code < 300;
             
-            let url = '/api/mobilejkn/task-id-logs?page=' + state.taskId.page + '&perPage=' + state.taskId.perPage;
-            
-            if (state.taskId.startDate && state.taskId.endDate) {
-                url = '/api/mobilejkn/filtered-task-id-logs?startDate=' + state.taskId.startDate + 
-                      '&endDate=' + state.taskId.endDate + 
-                      '&page=' + state.taskId.page + 
-                      '&perPage=' + state.taskId.perPage;
-            }
-            
-            axios.get(url)
-                .then(response => {
-                    const data = response.data;
-                    renderTaskIdLogs(data);
-                    updateTaskIdPagination(data);
-                })
-                .catch(error => {
-                    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-red-500"><i class="fas fa-exclamation-triangle mr-2"></i>Error loading logs</td></tr>';
-                    console.error('Error loading task ID logs:', error);
-                });
-        }
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors group';
+            tr.innerHTML = `
+                <td class="px-8 py-5 text-xs font-semibold text-slate-500">${new Date(log.created_at).toLocaleString()}</td>
+                <td class="px-8 py-5">
+                    <span class="px-3 py-1 rounded-full text-[10px] font-bold ${isSuccess ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
+                        ${log.code}
+                    </span>
+                </td>
+                <td class="px-8 py-5 font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
+                    ${req?.kodebooking || log.kodebooking || '---'}
+                </td>
+                <td class="px-8 py-5">
+                    <span class="text-xs font-black text-indigo-600">${req?.taskid || 'ANT'}</span>
+                </td>
+                <td class="px-8 py-5">
+                    <div class="text-[11px] text-slate-500 truncate max-w-[200px]" title="${res?.metadata?.message || '-'}">${res?.metadata?.message || '-'}</div>
+                </td>
+                <td class="px-8 py-5 text-right">
+                    <button class="text-[10px] font-bold uppercase tracking-widest text-indigo-600 hover:text-indigo-800 transition-colors flex items-center justify-end gap-1 ml-auto" onclick='openModal(${JSON.stringify(log)})'>
+                        Detail <i class="fas fa-arrow-right"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
 
-        function loadAntreanLogs() {
-            const tbody = document.getElementById('antrean-logs-body');
-            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading logs...</td></tr>';
-            
-            let url = '/api/mobilejkn/antrean-logs?page=' + state.antrean.page + '&perPage=' + state.antrean.perPage;
-            
-            // TODO: Add filtered antrean logs API endpoint
-            
-            axios.get(url)
-                .then(response => {
-                    const data = response.data;
-                    renderAntreanLogs(data);
-                    updateAntreanPagination(data);
-                })
-                .catch(error => {
-                    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-red-500"><i class="fas fa-exclamation-triangle mr-2"></i>Error loading logs</td></tr>';
-                    console.error('Error loading antrean logs:', error);
-                });
-        }
+    function updatePaginationInfo(data) {
+        document.getElementById('taskid-showing-text').textContent = `Showing ${data.from || 0} to ${data.to || 0} of ${data.total || 0}`;
+        document.getElementById('taskid-prev-page').disabled = data.current_page <= 1;
+        document.getElementById('taskid-next-page').disabled = data.current_page >= data.last_page;
+    }
 
-        function renderTaskIdLogs(data) {
-            const tbody = document.getElementById('taskid-logs-body');
-            tbody.innerHTML = '';
-            
-            if (data.data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No logs found</td></tr>';
-                return;
-            }
-            
-            data.data.forEach(log => {
-                const requestObj = tryParseJson(log.request);
-                let kodebooking = '';
-                let taskid = '';
-                
-                if (requestObj) {
-                    kodebooking = requestObj.kodebooking || '';
-                    taskid = requestObj.taskid || '';
-                }
-                
-                const responseObj = tryParseJson(log.message);
-                let responseMessage = '';
-                
-                if (responseObj && responseObj.metadata) {
-                    responseMessage = responseObj.metadata.message || '';
-                }
-                
-                const row = document.createElement('tr');
-                row.className = 'hover:bg-gray-50';
-                
-                // Time column
-                const timeCell = document.createElement('td');
-                timeCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                const date = new Date(log.created_at);
-                timeCell.textContent = date.toLocaleString();
-                row.appendChild(timeCell);
-                
-                // Status column
-                const statusCell = document.createElement('td');
-                statusCell.className = 'px-6 py-4 whitespace-nowrap';
-                let statusClass = '';
-                if (log.code >= 200 && log.code < 300) {
-                    statusClass = 'bg-green-100 text-green-800';
-                } else if (log.code >= 400 && log.code < 500) {
-                    statusClass = 'bg-yellow-100 text-yellow-800';
-                } else if (log.code >= 500) {
-                    statusClass = 'bg-red-100 text-red-800';
-                }
-                statusCell.innerHTML = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">${log.code}</span>`;
-                row.appendChild(statusCell);
-                
-                // Booking Code column
-                const bookingCodeCell = document.createElement('td');
-                bookingCodeCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
-                bookingCodeCell.textContent = kodebooking;
-                row.appendChild(bookingCodeCell);
-                
-                // Task ID column
-                const taskIdCell = document.createElement('td');
-                taskIdCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
-                taskIdCell.textContent = taskid;
-                row.appendChild(taskIdCell);
-                
-                // Response column
-                const responseCell = document.createElement('td');
-                responseCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                responseCell.textContent = responseMessage;
-                row.appendChild(responseCell);
-                
-                // Actions column
-                const actionsCell = document.createElement('td');
-                actionsCell.className = 'px-6 py-4 whitespace-nowrap text-right text-sm font-medium';
-                const viewBtn = document.createElement('button');
-                viewBtn.className = 'text-blue-600 hover:text-blue-900 mr-3';
-                viewBtn.innerHTML = '<i class="fas fa-eye mr-1"></i>View';
-                viewBtn.addEventListener('click', () => showLogModal(log, 'task'));
-                actionsCell.appendChild(viewBtn);
-                row.appendChild(actionsCell);
-                
-                tbody.appendChild(row);
-            });
-        }
+    function openModal(log) {
+        const req = tryParse(log.request);
+        const res = tryParse(log.message);
+        
+        document.getElementById('modalRequest').textContent = JSON.stringify(req, null, 4);
+        document.getElementById('modalResponse').textContent = JSON.stringify(res, null, 4);
+        document.getElementById('modalCode').textContent = log.code;
+        document.getElementById('modalMethod').textContent = log.method || 'POST';
+        document.getElementById('modalTaskId').textContent = req?.taskid || 'N/A';
+        document.getElementById('modalTime').textContent = new Date(log.created_at).toLocaleString();
+        document.getElementById('modalBookingLabel').textContent = `Booking Code: ${req?.kodebooking || 'N/A'}`;
+        
+        document.getElementById('logModal').classList.remove('hidden');
+    }
 
-        function renderAntreanLogs(data) {
-            const tbody = document.getElementById('antrean-logs-body');
-            tbody.innerHTML = '';
-            
-            if (data.data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No logs found</td></tr>';
-                return;
-            }
-            
-            data.data.forEach(log => {
-                const requestObj = tryParseJson(log.request);
-                let kodebooking = '';
-                let patientName = '';
-                
-                if (requestObj) {
-                    kodebooking = requestObj.kodebooking || '';
-                    patientName = requestObj.namapoli ? requestObj.namapoli + ' - ' + (requestObj.namadokter || '') : '';
-                }
-                
-                const responseObj = tryParseJson(log.message);
-                let responseMessage = '';
-                
-                if (responseObj && responseObj.metadata) {
-                    responseMessage = responseObj.metadata.message || '';
-                }
-                
-                const row = document.createElement('tr');
-                row.className = 'hover:bg-gray-50';
-                
-                // Time column
-                const timeCell = document.createElement('td');
-                timeCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                const date = new Date(log.created_at);
-                timeCell.textContent = date.toLocaleString();
-                row.appendChild(timeCell);
-                
-                // Status column
-                const statusCell = document.createElement('td');
-                statusCell.className = 'px-6 py-4 whitespace-nowrap';
-                let statusClass = '';
-                if (log.code >= 200 && log.code < 300) {
-                    statusClass = 'bg-green-100 text-green-800';
-                } else if (log.code >= 400 && log.code < 500) {
-                    statusClass = 'bg-yellow-100 text-yellow-800';
-                } else if (log.code >= 500) {
-                    statusClass = 'bg-red-100 text-red-800';
-                }
-                statusCell.innerHTML = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">${log.code}</span>`;
-                row.appendChild(statusCell);
-                
-                // Booking Code column
-                const bookingCodeCell = document.createElement('td');
-                bookingCodeCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
-                bookingCodeCell.textContent = kodebooking;
-                row.appendChild(bookingCodeCell);
-                
-                // Patient Name column
-                const patientNameCell = document.createElement('td');
-                patientNameCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
-                patientNameCell.textContent = patientName;
-                row.appendChild(patientNameCell);
-                
-                // Response column
-                const responseCell = document.createElement('td');
-                responseCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                responseCell.textContent = responseMessage;
-                row.appendChild(responseCell);
-                
-                // Actions column
-                const actionsCell = document.createElement('td');
-                actionsCell.className = 'px-6 py-4 whitespace-nowrap text-right text-sm font-medium';
-                const viewBtn = document.createElement('button');
-                viewBtn.className = 'text-blue-600 hover:text-blue-900 mr-3';
-                viewBtn.innerHTML = '<i class="fas fa-eye mr-1"></i>View';
-                viewBtn.addEventListener('click', () => showLogModal(log, 'antrean'));
-                actionsCell.appendChild(viewBtn);
-                row.appendChild(actionsCell);
-                
-                tbody.appendChild(row);
-            });
-        }
+    function setupModalEvents() {
+        const close = () => document.getElementById('logModal').classList.add('hidden');
+        document.getElementById('closeModal').onclick = close;
+        document.getElementById('closeModalBtn').onclick = close;
+    }
 
-        function updateTaskIdPagination(data) {
-            const prevBtn = document.getElementById('taskid-prev-page');
-            const nextBtn = document.getElementById('taskid-next-page');
-            const showingStart = document.getElementById('taskid-showing-start');
-            const showingEnd = document.getElementById('taskid-showing-end');
-            const totalItems = document.getElementById('taskid-total-items');
-            
-            prevBtn.disabled = data.current_page <= 1;
-            nextBtn.disabled = data.current_page >= data.last_page;
-            
-            showingStart.textContent = data.from || 0;
-            showingEnd.textContent = data.to || 0;
-            totalItems.textContent = data.total || 0;
-        }
-
-        function updateAntreanPagination(data) {
-            const prevBtn = document.getElementById('antrean-prev-page');
-            const nextBtn = document.getElementById('antrean-next-page');
-            const showingStart = document.getElementById('antrean-showing-start');
-            const showingEnd = document.getElementById('antrean-showing-end');
-            const totalItems = document.getElementById('antrean-total-items');
-            
-            prevBtn.disabled = data.current_page <= 1;
-            nextBtn.disabled = data.current_page >= data.last_page;
-            
-            showingStart.textContent = data.from || 0;
-            showingEnd.textContent = data.to || 0;
-            totalItems.textContent = data.total || 0;
-        }
-
-        function showLogModal(log, type) {
-            const requestObj = tryParseJson(log.request);
-            const responseObj = tryParseJson(log.message);
-            
-            document.getElementById('modalRequest').textContent = formatJson(log.request);
-            document.getElementById('modalResponse').textContent = formatJson(log.message);
-            document.getElementById('modalTime').textContent = new Date(log.created_at).toLocaleString();
-            document.getElementById('modalUrl').textContent = log.url;
-            document.getElementById('modalMethod').textContent = log.method;
-            document.getElementById('modalCode').textContent = log.code;
-            
-            let kodebooking = '';
-            if (requestObj) {
-                kodebooking = requestObj.kodebooking || '';
-            }
-            document.getElementById('modalBookingCode').textContent = kodebooking;
-            
-            if (type === 'task' && requestObj && requestObj.taskid) {
-                document.getElementById('modalTaskIdContainer').style.display = 'block';
-                document.getElementById('modalTaskId').textContent = requestObj.taskid;
-            } else {
-                document.getElementById('modalTaskIdContainer').style.display = 'none';
-            }
-            
-            document.getElementById('logModal').classList.remove('hidden');
-        }
-
-        function closeModal() {
-            document.getElementById('logModal').classList.add('hidden');
-        }
-
-        function tryParseJson(str) {
-            try {
-                return JSON.parse(str);
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function formatJson(str) {
-            try {
-                return JSON.stringify(JSON.parse(str), null, 2);
-            } catch (e) {
-                return str;
-            }
-        }
-    </script>
-@endsection
+    function tryParse(s) { try{ return typeof s === 'string' ? JSON.parse(s) : s; }catch(e){ return null; } }
+</script>
+@endpush

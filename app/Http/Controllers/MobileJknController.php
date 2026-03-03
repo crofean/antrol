@@ -320,7 +320,7 @@ class MobileJknController extends Controller
         }
 
         $referensis = $query->orderBy('tanggalperiksa', 'desc')
-            ->paginate(20)
+            ->paginate(10)
             ->appends($request->query());
 
         // Calculate statistics
