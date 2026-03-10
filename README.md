@@ -1,22 +1,22 @@
-## BPJS Task ID Sender
+## Antrol | BPJS Task ID Sender
 
 This application includes a scheduled command for automatically sending BPJS task IDs for patients based on their registration data.
 
 ### Features
 
--   **Automatic Antrean Addition**: Adds patients to BPJS queue system
--   **Task ID Management**: Sends task IDs (3, 4, 5, 6, 7) based on database timestamps
--   **Flexible Filtering**: Filter by date range, BPJS payer code, and exclude specific polyclinics
--   **Live Console Output**: Real-time progress tracking and statistics
--   **Dry Run Mode**: Test the process without actually sending data
+- **Automatic Antrean Addition**: Adds patients to BPJS queue system
+- **Task ID Management**: Sends task IDs (3, 4, 5, 6, 7) based on database timestamps
+- **Flexible Filtering**: Filter by date range, BPJS payer code, and exclude specific polyclinics
+- **Live Console Output**: Real-time progress tracking and statistics
+- **Dry Run Mode**: Test the process without actually sending data
 
 ### Task ID Mapping
 
--   **Task ID 3**: Registration time (from `referensi_mobilejkn_bpjs.validasi` or `reg_periksa.jam_reg`)
--   **Task ID 4**: Medical examination start (from `pemeriksaan_ralan` where `nip` is in `petugas`)
--   **Task ID 5**: Doctor examination (from `pemeriksaan_ralan` where `nip` is in `dokter`)
--   **Task ID 6**: Prescription time (from `resep_obat.jam`)
--   **Task ID 7**: Prescription handover (from `resep_obat.jam_penyerahan`)
+- **Task ID 3**: Registration time (from `referensi_mobilejkn_bpjs.validasi` or `reg_periksa.jam_reg`)
+- **Task ID 4**: Medical examination start (from `pemeriksaan_ralan` where `nip` is in `petugas`)
+- **Task ID 5**: Doctor examination (from `pemeriksaan_ralan` where `nip` is in `dokter`)
+- **Task ID 6**: Prescription time (from `resep_obat.jam`)
+- **Task ID 7**: Prescription handover (from `resep_obat.jam_penyerahan`)
 
 ### Usage
 
@@ -94,4 +94,25 @@ BPJS_EXCLUDE_POLI=POL001,POL002
 +--------------------+-------+
 
 ✅ BPJS Task ID processing completed!
+```
+
+## Docker (Development)
+
+This project includes a Docker setup for local development. See `DOCKER.md` for full instructions.
+
+Quick start:
+
+```bash
+cp .env.docker .env
+docker-compose up -d --build
+docker-compose exec app php artisan key:generate
+docker-compose exec app php artisan migrate --force
+```
+
+The app will be available at: http://localhost:8000
+
+To stop and remove containers:
+
+```bash
+docker-compose down
 ```

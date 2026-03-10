@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: antrol_app
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: antrol
+      DB_USERNAME: antrol_user
+      DB_PASSWORD: antrol_password
+      APP_ENV: local
+      APP_DEBUG: "true"
+      MIGRATE_ON_START: "true"
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/vendor
+    depends_on:
+      - mysql
+    networks:
+      - antrol
+
+  mysql:
+    image: mysql:8.0
+    container_name: antrol_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: antrol
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_PASSWORD: antrol_password
+      MYSQL_USER: antrol_user
+      MYSQL_ALLOW_EMPTY_PASSWORD: "false"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - antrol
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: antrol_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - antrol
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 20s
+      retries: 10
+
+volumes:
+  mysql_data:
+
+networks:
+  antrol:
+    driver: bridge
