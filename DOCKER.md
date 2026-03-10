@@ -1,4 +1,4 @@
-# Docker Setup Guide for RSAM Antrol
+# Docker Setup Guide for Antrol
 
 ## Quick Start
 
