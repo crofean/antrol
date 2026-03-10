@@ -440,9 +440,26 @@ class MobileJknController extends Controller
 
                     $oldStatus = $referensi->status;
 
+                    // Calculate validation timestamp based on tanggal periksa and pemeriksaan ralan time (based on task id 4 with nip as petugas)
+                    $validasiTimestamp = now();
+                    $pemeriksaanRalan = \App\Models\PemeriksaanRalan::where('no_rawat', $referensi->no_rawat)
+                        ->whereNotNull('nip')
+                        ->first();
+                    
+                    if ($pemeriksaanRalan && $pemeriksaanRalan->jam_rawat) {
+                        // Use the date from tanggalperiksa and time from pemeriksaan ralan minus 10 minutes
+                        $validasiTimestamp = \Carbon\Carbon::parse($referensi->tanggalperiksa)
+                            ->setTime(
+                                $pemeriksaanRalan->jam_rawat->hour,
+                                $pemeriksaanRalan->jam_rawat->minute,
+                                $pemeriksaanRalan->jam_rawat->second
+                            )
+                            ->subMinutes(10);
+                    }
+
                     $referensi->update([
                         'status' => $newStatus,
-                        'validasi' => now(),
+                        'validasi' => $validasiTimestamp,
                     ]);
 
                     $updatedCount++;
