@@ -158,9 +158,7 @@ class RegPeriksaController extends Controller
 
         $taskList = $this->mobileJknService->getTaskIdRecord($noRawat);
 
-        // if ($include === 'task') {
         $task = $this->mobileJknService->getPatientDataForTaskId($noRawat);
-        // }
 
         if (!$patient) {
             return response()->json([
@@ -169,9 +167,11 @@ class RegPeriksaController extends Controller
             ], 404);
         }
 
+        $refArray = $ref ? $ref->toArray() : null;
+
         return response()->json([
             'success' => true,
-            'data' => array_merge($patient->toArray(), ['referensi_mobilejkn_bpjs' => $ref->toArray()]),
+            'data' => array_merge($patient->toArray(), ['referensi_mobilejkn_bpjs' => $refArray]),
             'task' => $task ?? null,
             'task_list' => $taskList ?? null
         ]);

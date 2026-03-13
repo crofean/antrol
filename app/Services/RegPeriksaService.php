@@ -86,7 +86,7 @@ class RegPeriksaService
      */
     public function getPatientByNoRawat(string $noRawat): ?RegPeriksa
     {
-        return RegPeriksa::with(['bridgingSep'])
+        return RegPeriksa::with(['bridgingSep', 'pasien', 'referensiMobilejknBpjs', 'referensiMobilejknBpjsTaskid'])
             ->where('no_rawat', $noRawat)
             ->first();
     }

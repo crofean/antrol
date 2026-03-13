@@ -141,7 +141,7 @@ class MobileJknService
     protected function getTask3Timestamp(string $kodebooking): ?string
     {
         // First try to get from referensi_mobilejkn_bpjs
-        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->orderByDesc('validasi')->first();
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
 
         if ($referensi && $referensi->validasi) {
             return $referensi->validasi->timestamp * 1000;
@@ -173,7 +173,29 @@ class MobileJknService
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
             $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+            // Add a random offset between 5 and 10 minutes to the recorded jam_rawat
+            // try {
+            //     $offsetMinutes = random_int(5, 10);
+            // } catch (\Throwable $e) {
+            //     $offsetMinutes = rand(5, 10);
+            // }
+            // $waktu = $waktu->copy()->addMinutes($offsetMinutes);
             return (string) ($waktu->timestamp * 1000);
+        } else {
+            $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
+                ->orderBy('jam_rawat', 'asc')
+                ->first();
+
+            if ($pemeriksaan && $pemeriksaan->jam_rawat) {
+                $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+                try {
+                    $offsetMinutes = random_int(5, 10);
+                } catch (Throwable $e) {
+                    $offsetMinutes = rand(5, 10);
+                }
+                $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+                return (string) ($waktu->timestamp * 1000);
+            }
         }
 
         return null;
@@ -194,7 +216,29 @@ class MobileJknService
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
             $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+            // Add a random offset between 5 and 10 minutes to the recorded jam_rawat
+            // try {
+            //     $offsetMinutes = random_int(5, 10);
+            // } catch (\Throwable $e) {
+            //     $offsetMinutes = rand(5, 10);
+            // }
+            // $waktu = $waktu->copy()->addMinutes($offsetMinutes);
             return (string) ($waktu->timestamp * 1000);
+        } else {
+            $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
+                ->orderBy('jam_rawat', 'desc')
+                ->first();
+
+            if ($pemeriksaan && $pemeriksaan->jam_rawat) {
+                $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+                try {
+                    $offsetMinutes = random_int(5, 10);
+                } catch (Throwable $e) {
+                    $offsetMinutes = rand(5, 10);
+                }
+                $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+                return (string) ($waktu->timestamp * 1000);
+            }
         }
 
         return null;
@@ -655,8 +699,8 @@ class MobileJknService
             // }
 
             // if (empty($nomorreferensi)) {
-                $jenisKunjungan = 3; // Kontrol
-                $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
+                // $jenisKunjungan = 3; // Kontrol
+                // $nomorreferensi = $this->fetchKontrol($pasien->no_peserta ?? '', $kodepoli, null, null);
             // }
 
             Log::info("Nomor Referensi: {$nomorreferensi}, Jenis Kunjungan: {$jenisKunjungan}");
