@@ -24,7 +24,9 @@
 
     <!-- Main Tool -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div class="lg:col-span-1">
+        <!-- Left Column: Configuration & Task IDs -->
+        <div class="lg:col-span-1 flex flex-col gap-8">
+            <!-- Configuration Panel -->
             <div class="glass rounded-3xl p-8 shadow-sm space-y-8">
                 <h3 class="text-xl font-bold flex items-center">
                     <i class="fas fa-cog mr-3 text-amber-500"></i> Configuration
@@ -68,9 +70,22 @@
                     </button>
                 </form>
             </div>
+
+            <!-- Task IDs Panel -->
+            <div class="glass rounded-3xl p-8 shadow-sm space-y-4 flex-1 flex flex-col">
+                <h3 class="text-xl font-bold flex items-center">
+                    <i class="fas fa-tasks mr-3 text-blue-500"></i> Task IDs Queue
+                </h3>
+                
+                <div id="taskIdsList" class="flex-1 overflow-y-auto space-y-2 bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4">
+                    <div class="text-slate-400 italic text-center py-8">
+                        <i class="fas fa-info-circle mr-2"></i>Task IDs will appear here...
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <!-- Terminal Output -->
+        <!-- Right Column: Real-time Log Output -->
         <div class="lg:col-span-2">
             <div class="glass h-[600px] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border-slate-900/5 dark:border-white/5">
                 <div class="px-8 py-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-900">
@@ -99,6 +114,62 @@
 <script>
     let jobId = null;
     let outputInterval = null;
+    
+    // Load task IDs when dates change
+    function loadTaskIds() {
+        const dateFrom = document.getElementById('date_from').value;
+        const dateTo = document.getElementById('date_to').value;
+        
+        if (!dateFrom || !dateTo) return;
+        
+        fetch(`{{ route('command.task-ids') }}?date_from=${dateFrom}&date_to=${dateTo}`)
+            .then(r => r.json())
+            .then(data => {
+                displayTaskIds(data.task_ids);
+            })
+            .catch(err => console.error('Failed to load task IDs:', err));
+    }
+
+    // Display task IDs in the left panel
+    function displayTaskIds(taskIds) {
+        const container = document.getElementById('taskIdsList');
+        
+        if (!taskIds || taskIds.length === 0) {
+            container.innerHTML = '<div class="text-slate-400 italic text-center py-8"><i class="fas fa-info-circle mr-2"></i>No task IDs found</div>';
+            return;
+        }
+
+        let html = '';
+        taskIds.forEach((taskId, index) => {
+            const statusClass = taskId <= 4 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300';
+            const icon = taskId === 5 ? 'fa-star' : 'fa-circle';
+            const label = taskId === 5 ? 'Auto-Generated' : `Standard`;
+            
+            html += `
+                <div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 hover:shadow-md transition-all">
+                    <div class="flex items-center gap-3">
+                        <i class="fas ${icon} text-sm ${taskId === 5 ? 'text-amber-500' : 'text-slate-400'}"></i>
+                        <div>
+                            <div class="font-bold text-slate-900 dark:text-white">Task ID ${taskId}</div>
+                            <div class="text-[10px] text-slate-500 dark:text-slate-400">${label}</div>
+                        </div>
+                    </div>
+                    <span class="px-3 py-1 rounded-full text-[10px] font-semibold ${statusClass}">
+                        ${taskId === 5 ? 'Generated' : taskId <= 3 ? 'Pending' : 'Ready'}
+                    </span>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    }
+
+    // Load task IDs on page load and when dates change
+    document.getElementById('date_from').addEventListener('change', loadTaskIds);
+    document.getElementById('date_to').addEventListener('change', loadTaskIds);
+    
+    // Load initial task IDs
+    loadTaskIds();
     
     document.getElementById('commandForm').onsubmit = (e) => {
         e.preventDefault();

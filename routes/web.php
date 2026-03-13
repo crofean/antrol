@@ -44,6 +44,7 @@ Route::prefix('mobilejkn')->group(function () {
 Route::post('/run-command', [CommandOutputController::class, 'runCommand'])->name('command.run');
 Route::post('/stop-command', [CommandOutputController::class, 'stopCommand'])->name('command.stop');
 Route::get('/command-output/{jobId}', [CommandOutputController::class, 'getOutput'])->name('command.output');
+Route::get('/get-task-ids', [CommandOutputController::class, 'getTaskIds'])->name('command.task-ids');
 Route::get('/debug-command-cache/{jobId?}', [CommandOutputController::class, 'debugCache'])->name('command.debug');
 
 // RegPeriksa API Routes

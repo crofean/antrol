@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\RunBpjsTaskIdCommand;
+use App\Models\ReferensiMobilejknBpjsTaskid;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Log;
@@ -129,6 +130,98 @@ class CommandOutputController extends Controller
         }
 
         return response()->json($output);
+    }
+
+    /**
+     * Get task IDs being sent in the current batch.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getTaskIds(Request $request)
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date',
+        ]);
+
+        $dateFrom = $request->date_from ? \Carbon\Carbon::parse($request->date_from)->startOfDay() : now()->startOfDay();
+        $dateTo = $request->date_to ? \Carbon\Carbon::parse($request->date_to)->endOfDay() : now()->endOfDay();
+
+        // Ensure task IDs 1-5 exist with appropriate timing
+        $this->ensureTaskIds($dateFrom, $dateTo);
+
+        // Get all task IDs for the date range
+        $taskIds = ReferensiMobilejknBpjsTaskid::whereBetween('waktu', [$dateFrom, $dateTo])
+            ->orderBy('taskid')
+            ->distinct()
+            ->pluck('taskid')
+            ->values();
+
+        return response()->json([
+            'task_ids' => $taskIds,
+            'date_range' => [
+                'from' => $dateFrom->toDateString(),
+                'to' => $dateTo->toDateString()
+            ]
+        ]);
+    }
+
+    /**
+     * Ensure that task IDs 1-5 exist for the given date range.
+     * Task ID 5 is automatically created based on Task ID 4 + 10-15 minutes.
+     *
+     * @param  \Carbon\Carbon  $dateFrom
+     * @param  \Carbon\Carbon  $dateTo
+     * @return void
+     */
+    private function ensureTaskIds($dateFrom, $dateTo)
+    {
+        // Get all unique raw records for the date range
+        $records = ReferensiMobilejknBpjsTaskid::whereBetween('waktu', [$dateFrom, $dateTo])
+            ->get();
+
+        // Group by no_rawat to process each record
+        $groupedByNoRawat = $records->groupBy('no_rawat');
+
+        foreach ($groupedByNoRawat as $noRawat => $taskIdRecords) {
+            $taskIds = $taskIdRecords->pluck('taskid')->unique()->values();
+
+            // Check if task ID 4 exists
+            $hasTaskId4 = $taskIds->contains(4);
+            $hasTaskId5 = $taskIds->contains(5);
+
+            if ($hasTaskId4 && !$hasTaskId5) {
+                // Get task ID 4 record to get its timing
+                $taskId4Record = $taskIdRecords->firstWhere('taskid', 4);
+                
+                if ($taskId4Record) {
+                    $taskId4Time = \Carbon\Carbon::parse($taskId4Record->waktu);
+                    
+                    // Create task ID 5 with time 10-15 minutes after task ID 4
+                    $taskId5Time = $taskId4Time->addMinutes(rand(10, 15));
+
+                    // Check if this specific task ID 5 doesn't exist
+                    $existingTask5 = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat)
+                        ->where('taskid', 5)
+                        ->first();
+
+                    if (!$existingTask5) {
+                        ReferensiMobilejknBpjsTaskid::create([
+                            'no_rawat' => $noRawat,
+                            'taskid' => 5,
+                            'waktu' => $taskId5Time,
+                        ]);
+
+                        Log::info('Task ID 5 created automatically', [
+                            'no_rawat' => $noRawat,
+                            'task_id_4_time' => $taskId4Record->waktu,
+                            'task_id_5_time' => $taskId5Time,
+                        ]);
+                    }
+                }
+            }
+        }
     }
 
     /**
