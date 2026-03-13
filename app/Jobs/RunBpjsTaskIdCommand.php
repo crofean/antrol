@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Services\TaskExecutionTracker;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -55,6 +56,23 @@ class RunBpjsTaskIdCommand implements ShouldQueue
     public function handle(): void
     {
         try {
+            // Initialize execution tracker with proper cache structure
+            $tracker = new TaskExecutionTracker($this->jobId);
+            
+            // Initialize tracking data in cache
+            Cache::put('task-execution:' . $this->jobId, [
+                'job_id' => $this->jobId,
+                'bookings' => [],
+                'summary' => [
+                    'total_bookings' => 0,
+                    'task_ids' => [],
+                    'completed' => 0,
+                    'failed' => 0,
+                    'pending' => 0,
+                    'started_at' => now()->toIso8601String()
+                ]
+            ], 3600);
+            
             // Get existing cache entry or create a new one
             $cacheEntry = Cache::get('command-output:' . $this->jobId, [
                 'output' => []
@@ -107,8 +125,14 @@ class RunBpjsTaskIdCommand implements ShouldQueue
                     set_time_limit(300); // 5 minutes
                     
                     $outputBuffer = new BufferedOutput;
+                    $startTime = microtime(true);
                     $exitCode = Artisan::call('bpjs:send-task-ids', $commandOptions, $outputBuffer);
+                    $duration = microtime(true) - $startTime;
+                    
                     $output = $outputBuffer->fetch();
+                    
+                    // Parse output to track bookings
+                    $this->parseAndTrackOutput($output, $tracker, $exitCode, $duration);
                     
                     // Only keep the last 2000 characters of output if it's very large
                     if (strlen($output) > 5000) {
@@ -121,7 +145,8 @@ class RunBpjsTaskIdCommand implements ShouldQueue
                         'job_id' => $this->jobId,
                         'attempt' => $attempt,
                         'exit_code' => $exitCode,
-                        'output_length' => strlen($output)
+                        'output_length' => strlen($output),
+                        'duration' => $duration
                     ]);
 
                     // Store incremental output in cache
@@ -179,6 +204,9 @@ class RunBpjsTaskIdCommand implements ShouldQueue
                     $currentOutput['attempts'] = $attempt;
                     $currentOutput['status'] = 'retrying';
                     Cache::put('command-output:' . $this->jobId, $currentOutput, 3600);
+                    
+                    // Track failure
+                    $tracker->failBooking('SYSTEM', 'Error: ' . $e->getMessage());
 
                     if ($attempt < $maxAttempts) {
                         sleep($retryInterval);
@@ -212,6 +240,56 @@ class RunBpjsTaskIdCommand implements ShouldQueue
             
             // Re-throw to let Laravel handle job failure
             throw $e;
+        }
+    }
+
+    /**
+     * Parse the command output and track execution details.
+     *
+     * @param string $output Command output
+     * @param TaskExecutionTracker $tracker
+     * @param int $exitCode
+     * @param float $duration
+     * @return void
+     */
+    private function parseAndTrackOutput($output, $tracker, $exitCode, $duration)
+    {
+        // Try to parse output for booking information
+        // This is a generic parser - adjust based on your actual command output format
+        
+        $lines = explode("\n", $output);
+        $noRawat = null;
+        $taskId = null;
+        
+        foreach ($lines as $line) {
+            // Look for booking number (adjust pattern based on your output)
+            if (preg_match('/no_rawat[:\s]+([A-Z0-9]+)/i', $line, $matches)) {
+                $noRawat = $matches[1];
+            }
+            
+            // Look for task ID (adjust pattern based on your output)
+            if (preg_match('/task[_\s]?id[:\s]+(\d+)/i', $line, $matches)) {
+                $taskId = (int) $matches[1];
+            }
+            
+            // Look for status indicators
+            if ($noRawat && $taskId) {
+                $status = 'pending';
+                
+                if (strpos($line, 'success') !== false || strpos($line, 'completed') !== false) {
+                    $status = 'completed';
+                } elseif (strpos($line, 'error') !== false || strpos($line, 'failed') !== false) {
+                    $status = 'failed';
+                } elseif (strpos($line, 'processing') !== false) {
+                    $status = 'processing';
+                }
+                
+                if ($status !== 'pending') {
+                    $tracker->recordStep($noRawat, $taskId, $status, trim($line), (int)$duration);
+                    $noRawat = null;
+                    $taskId = null;
+                }
+            }
         }
     }
 

@@ -19,6 +19,16 @@
                class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
                 <i class="fas fa-arrow-left mr-2"></i>Back to Patients
             </a>
+            
+            <a href="{{ route('log.viewer') }}"
+               class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center" target="_blank">
+                <i class="fas fa-stream mr-2"></i>View Logs
+            </a>
+
+            <a id="executionDetailsBtn" href="javascript:void(0)"
+               class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center" style="display: none;">
+                <i class="fas fa-chart-line mr-2"></i>Execution Details
+            </a>
         </div>
     </div>
 
@@ -73,9 +83,14 @@
 
             <!-- Task IDs Panel -->
             <div class="glass rounded-3xl p-8 shadow-sm space-y-4 flex-1 flex flex-col">
-                <h3 class="text-xl font-bold flex items-center">
-                    <i class="fas fa-tasks mr-3 text-blue-500"></i> Task IDs Queue
-                </h3>
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xl font-bold flex items-center">
+                        <i class="fas fa-tasks mr-3 text-blue-500"></i> Task IDs Queue
+                    </h3>
+                    <button type="button" id="reloadTaskIds" class="text-blue-500 hover:text-blue-600 transition-colors" title="Reload task IDs">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
                 
                 <div id="taskIdsList" class="flex-1 overflow-y-auto space-y-2 bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4">
                     <div class="text-slate-400 italic text-center py-8">
@@ -122,12 +137,33 @@
         
         if (!dateFrom || !dateTo) return;
         
-        fetch(`{{ route('command.task-ids') }}?date_from=${dateFrom}&date_to=${dateTo}`)
-            .then(r => r.json())
-            .then(data => {
-                displayTaskIds(data.task_ids);
-            })
-            .catch(err => console.error('Failed to load task IDs:', err));
+        console.log('Loading task IDs for:', dateFrom, 'to', dateTo);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+        fetch(`{{ route('command.task-ids') }}?date_from=${dateFrom}&date_to=${dateTo}`, {
+            signal: controller.signal
+        })
+        .then(r => {
+            clearTimeout(timeoutId);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+        })
+        .then(data => {
+            console.log('Task IDs loaded:', data.task_ids);
+            displayTaskIds(data.task_ids);
+        })
+        .catch(err => {
+            clearTimeout(timeoutId);
+            console.error('Failed to load task IDs:', err);
+            const container = document.getElementById('taskIdsList');
+            if (err.name === 'AbortError') {
+                container.innerHTML = '<div class="text-amber-400 italic text-center py-8"><i class="fas fa-clock mr-2"></i>Load timeout - try again</div>';
+            } else {
+                container.innerHTML = '<div class="text-slate-400 italic text-center py-8"><i class="fas fa-exclamation-circle mr-2"></i>Failed to load task IDs</div>';
+            }
+        });
     }
 
     // Display task IDs in the left panel
@@ -167,6 +203,11 @@
     // Load task IDs on page load and when dates change
     document.getElementById('date_from').addEventListener('change', loadTaskIds);
     document.getElementById('date_to').addEventListener('change', loadTaskIds);
+    document.getElementById('reloadTaskIds').addEventListener('click', (e) => {
+        e.preventDefault();
+        console.log('Manually reloading task IDs...');
+        loadTaskIds();
+    });
     
     // Load initial task IDs
     loadTaskIds();
@@ -181,34 +222,70 @@
         };
         
         const output = document.getElementById('outputArea');
-        output.innerHTML = `<span class="text-white font-bold animate-pulse">Initializing pipeline...</span>\n\n`;
+        output.innerHTML = `<span class="text-white font-bold animate-pulse">Initializing pipeline...</span>\n`;
+        output.innerHTML += `<span class="text-slate-500">[debug]</span> Sending request to server...\n`;
+        
+        console.log('Form submitted with payload:', payload);
+        console.log('CSRF Token:', document.querySelector('meta[name="csrf-token"]')?.content || 'NOT FOUND');
+        console.log('Route URL:', '{{ route("command.run") }}');
         
         document.getElementById('stopButton').classList.remove('hidden');
         updateStatus('running');
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
         fetch('{{ route("command.run") }}', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
-            body: JSON.stringify(payload)
+            headers: { 
+                'Content-Type': 'application/json', 
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
         })
         .then(async r => {
+            clearTimeout(timeoutId);
+            console.log('Response received:', r.status, r.statusText);
+            
             const data = await r.json();
+            console.log('Response data:', data);
+            
             if (!r.ok) {
                 throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
             }
             return data;
         })
         .then(data => {
+            console.log('Success! Job ID:', data.job_id);
             jobId = data.job_id;
-            output.innerHTML = `<span class="text-emerald-400">[info]</span> Job ID: ${jobId}\n`;
+            
+            // Show execution details button
+            const executionBtn = document.getElementById('executionDetailsBtn');
+            executionBtn.href = `/execution-viewer/${jobId}`;
+            executionBtn.style.display = 'flex';
+            executionBtn.target = '_blank';
+            
+            output.innerHTML = `<span class="text-emerald-400">[✓]</span> Job dispatched successfully\n`;
+            output.innerHTML += `<span class="text-emerald-400">[info]</span> Job ID: ${jobId}\n`;
             outputInterval = setInterval(fetchOutput, 1000);
             if (data.queue_info?.message) output.innerHTML += `<span class="text-blue-400">[info]</span> ${data.queue_info.message}\n`;
         })
         .catch(err => {
+            clearTimeout(timeoutId);
             console.error('Failed to start sync engine:', err);
-            output.innerHTML += `<span class="text-rose-500">[error]</span> Failed to start sync engine.\n`;
-            output.innerHTML += `<span class="text-rose-400">[error]</span> ${err.message}\n`;
-            output.innerHTML += `<span class="text-amber-400">[debug]</span> Check browser console for more details.\n`;
+            
+            output.innerHTML = `<span class="text-rose-500">[✗]</span> Failed to start sync engine\n`;
+            
+            if (err.name === 'AbortError') {
+                output.innerHTML += `<span class="text-rose-400">[error]</span> Request timeout (60s) - server may not be responding\n`;
+            } else {
+                output.innerHTML += `<span class="text-rose-400">[error]</span> ${err.message}\n`;
+            }
+            
+            output.innerHTML += `<span class="text-amber-400">[debug]</span> Check browser console (F12) for more details\n`;
+            console.error('Full error:', err);
             updateStatus('failed');
         });
     };

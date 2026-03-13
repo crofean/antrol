@@ -285,6 +285,207 @@ class MobileJknService
     }
 
     /**
+     * Get time for previous task ID if exists
+     *
+     * @param string $kodebooking
+     * @param int $taskid
+     * @return int|null Previous task time in milliseconds
+     */
+    private function getPreviousTaskTime(string $kodebooking, int $taskid): ?int
+    {
+        if ($taskid <= 1) return null;
+        
+        $previousTaskId = $taskid - 1;
+        $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
+        
+        $previousTask = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat)
+            ->where('taskid', (string) $previousTaskId)
+            ->first();
+        
+        if ($previousTask && $previousTask->waktu) {
+            $previousTime = Carbon::parse($previousTask->waktu);
+            return (int)($previousTime->timestamp * 1000);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Get service date for a booking
+     *
+     * @param string $kodebooking
+     * @return Carbon|null Service date
+     */
+    /**
+     * Get service date for a booking
+     * Extracts from kodebooking format (YYYY/MM/DD/XXXX) or database
+     *
+     * @param string $kodebooking
+     * @return Carbon|null Service date
+     */
+    private function getServiceDate(string $kodebooking): ?Carbon
+    {
+        try {
+            // Try to extract date from kodebooking format (YYYY/MM/DD/...)
+            $parts = explode('/', $kodebooking);
+            if (count($parts) >= 3) {
+                $year = $parts[0];
+                $month = $parts[1];
+                $day = $parts[2];
+                
+                if (is_numeric($year) && is_numeric($month) && is_numeric($day)) {
+                    $serviceDate = Carbon::createFromDate($year, $month, $day);
+                    Log::debug('Service date extracted from kodebooking', [
+                        'kodebooking' => $kodebooking,
+                        'service_date' => $serviceDate
+                    ]);
+                    return $serviceDate->startOfDay();
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Failed to extract service date from kodebooking', ['error' => $e->getMessage()]);
+        }
+        
+        // Fallback: try to get from database
+        try {
+            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+            
+            if ($referensi && $referensi->no_rawat) {
+                $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
+                
+                if ($regPeriksa && $regPeriksa->tgl_registrasi) {
+                    $serviceDate = Carbon::parse($regPeriksa->tgl_registrasi);
+                    Log::debug('Service date from database', [
+                        'kodebooking' => $kodebooking,
+                        'service_date' => $serviceDate
+                    ]);
+                    return $serviceDate->startOfDay();
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Failed to get service date from database', ['error' => $e->getMessage()]);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Ensure time stays within the service date (same day)
+     *
+     * @param int $waktuMs Waktu in milliseconds
+     * @param Carbon $serviceDate The service date
+     * @return int Adjusted waktu (capped to end of service date if needed)
+     */
+    private function ensureTimeWithinServiceDate(int $waktuMs, Carbon $serviceDate): int
+    {
+        // Set UTC for consistent comparisons
+        date_default_timezone_set('UTC');
+        
+        $waktuTime = Carbon::createFromTimestampMs($waktuMs)->setTimezone('UTC');
+        $serviceDateStart = $serviceDate->copy()->startOfDay()->setTimezone('UTC');
+        $serviceDateEnd = $serviceDate->copy()->endOfDay()->setTimezone('UTC');
+        
+        Log::debug('Time validation check', [
+            'waktu_time' => $waktuTime,
+            'service_date_start' => $serviceDateStart,
+            'service_date_end' => $serviceDateEnd
+        ]);
+        
+        // If time is before service date, set to start of service date
+        if ($waktuTime->isBefore($serviceDateStart)) {
+            Log::warning('Time is before service date, adjusting to service date start', [
+                'original_time' => $waktuTime,
+                'service_date' => $serviceDateStart,
+                'adjusted_to' => $serviceDateStart
+            ]);
+            return (int)($serviceDateStart->timestamp * 1000);
+        }
+        
+        // If time is after service date, set to 23:59:59 of service date (not quite end of day)
+        if ($waktuTime->isAfter($serviceDateEnd)) {
+            $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
+            Log::warning('Time is after service date, adjusting to end of service date', [
+                'original_time' => $waktuTime,
+                'service_date' => $serviceDateEnd,
+                'adjusted_to' => $cappedTime
+            ]);
+            return (int)($cappedTime->timestamp * 1000);
+        }
+        
+        return $waktuMs;
+    }
+
+    /**
+     * Adjust waktu to be at least 10 minutes after previous task time if needed
+     *
+     * @param int $currentWaktu Current waktu in milliseconds
+     * @param int $previousWaktu Previous task waktu in milliseconds
+     * @param Carbon|null $serviceDate Service date limit (for boundary checking)
+     * @return int Adjusted waktu (at least 10 minutes after previous, but within service date)
+     */
+    private function ensureTimeAfterPrevious(int $currentWaktu, int $previousWaktu, ?Carbon $serviceDate = null): int
+    {
+        date_default_timezone_set('UTC');
+        
+        $minTimeAfterPrevious = $previousWaktu + (10 * 60 * 1000); // 10 minutes in milliseconds
+        
+        // Check if the time is within service date if provided
+        if ($serviceDate) {
+            $serviceDateEnd = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
+            $serviceDateEndMs = (int)($serviceDateEnd->timestamp * 1000);
+            
+            // If adding 10 minutes would exceed service date, cap it to end of day minus 1 minute
+            if ($minTimeAfterPrevious > $serviceDateEndMs) {
+                $cappedTime = $serviceDateEnd->copy()->subMinute();
+                $cappedMs = (int)($cappedTime->timestamp * 1000);
+                
+                Log::warning('Adding 10 minutes exceeds service date, capping to 23:58:59', [
+                    'previous_waktu' => $previousWaktu,
+                    'would_be' => $minTimeAfterPrevious,
+                    'service_date_end' => $serviceDateEndMs,
+                    'adjusted_to' => $cappedMs
+                ]);
+                return $cappedMs;
+            }
+        }
+        
+        if ($currentWaktu <= $previousWaktu) {
+            Log::info('Time adjustment needed', [
+                'current_waktu' => $currentWaktu,
+                'previous_waktu' => $previousWaktu,
+                'adjusted_to' => $minTimeAfterPrevious
+            ]);
+            return $minTimeAfterPrevious;
+        }
+        
+        return $currentWaktu;
+    }
+
+    /**
+     * Adjust waktu to be at least 10 minutes after previous task time if needed
+     *
+     * @param int $currentWaktu Current waktu in milliseconds
+     * @param int $previousWaktu Previous task waktu in milliseconds
+     * @return int Adjusted waktu (at least 10 minutes after previous)
+     */
+    private function ensureTimeAfterPreviousSimple(int $currentWaktu, int $previousWaktu): int
+    {
+        $minTimeAfterPrevious = $previousWaktu + (10 * 60 * 1000); // 10 minutes in milliseconds
+        
+        if ($currentWaktu <= $previousWaktu) {
+            Log::info('Time adjustment needed', [
+                'current_waktu' => $currentWaktu,
+                'previous_waktu' => $previousWaktu,
+                'adjusted_to' => $minTimeAfterPrevious
+            ]);
+            return $minTimeAfterPrevious;
+        }
+        
+        return $currentWaktu;
+    }
+
+    /**
      * Send task ID update to Mobile JKN API
      *
      * @param string $kodebooking
@@ -292,8 +493,22 @@ class MobileJknService
      * @param string|null $waktu Timestamp in milliseconds, if null will get from database
      * @return array
      */
-    public function updateTaskId(string $kodebooking, int $taskid, ?string $waktu = null): array
+    public function updateTaskId(string $kodebooking, int $taskid, ?string $waktu = null, int $retryCount = 0): array
     {
+        // Prevent infinite recursion
+        if ($retryCount > 3) {
+            Log::error('Max retry count exceeded', [
+                'kodebooking' => $kodebooking,
+                'taskid' => $taskid,
+                'retry_count' => $retryCount
+            ]);
+            return [
+                'success' => false,
+                'error' => 'Max retry attempts exceeded',
+                'status_code' => 500
+            ];
+        }
+        
         try {
             // Validate taskid
             if (!in_array($taskid, [1, 2, 3, 4, 5, 6, 7, 99])) {
@@ -307,6 +522,44 @@ class MobileJknService
                 if ($waktu === null) {
                     throw new Exception("Could not find timestamp for task ID {$taskid} in database");
                 }
+            }
+
+            // Get service date for boundary validation
+            $serviceDate = $this->getServiceDate($kodebooking);
+            
+            // Convert waktu to int for processing
+            $waktuInt = (int)$waktu;
+            
+            // Validate waktu is reasonable (not corrupted negative values or extremely old times)
+            if ($waktuInt < 0 || $waktuInt < 1609459200000) { // Before Jan 1, 2021
+                Log::warning('Invalid waktu value detected, using current time within service date', [
+                    'kodebooking' => $kodebooking,
+                    'taskid' => $taskid,
+                    'invalid_waktu' => $waktuInt
+                ]);
+                
+                // Use current time if within service date, otherwise use end of service date
+                if ($serviceDate) {
+                    $now = Carbon::now()->timestamp * 1000;
+                    $serviceDateEnd = $serviceDate->copy()->setTime(23, 59, 59)->timestamp * 1000;
+                    $waktuInt = min($now, $serviceDateEnd);
+                } else {
+                    $waktuInt = (int)(Carbon::now()->timestamp * 1000);
+                }
+            }
+            
+            // Ensure time is within service date first
+            if ($serviceDate) {
+                $waktuInt = $this->ensureTimeWithinServiceDate($waktuInt, $serviceDate);
+            }
+            
+            // Check if we need to adjust the time to be after the previous task
+            $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
+            if ($previousWaktu !== null && $previousWaktu > 0) {
+                $waktuInt = $this->ensureTimeAfterPrevious($waktuInt, $previousWaktu, $serviceDate);
+                $waktu = (string)$waktuInt;
+            } else {
+                $waktu = (string)$waktuInt;
             }
 
             date_default_timezone_set('UTC');
@@ -363,10 +616,121 @@ class MobileJknService
                 'response' => $responseData
             ]);
 
-            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
-
-            // If BPJS returns message indicating the TaskId already exists, persist it locally
             $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? null);
+            
+            // Handle "time cannot be less than or equal to previous time" error
+            if (is_string($metaMessage) && strpos($metaMessage, 'tidak boleh kurang atau sama dengan waktu sebelumnya') !== false) {
+                Log::warning('Time validation error, attempting automatic retry with adjusted time', [
+                    'kodebooking' => $kodebooking,
+                    'taskid' => $taskid,
+                    'current_waktu' => $waktuInt,
+                    'error' => $metaMessage
+                ]);
+                
+                // Get previous task waktu and add 10+ minutes
+                $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
+                if ($previousWaktu !== null) {
+                    $adjustedWaktu = $previousWaktu + (10 * 60 * 1000) + 1000; // 10 minutes + 1 second buffer
+                    
+                    Log::info('Retrying with adjusted time', [
+                        'previous_waktu' => $previousWaktu,
+                        'adjusted_waktu' => $adjustedWaktu
+                    ]);
+                    
+                    // Recursive call with adjusted time
+                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1);
+                    
+                    // If retry succeeds, save the adjusted time to database
+                    if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
+                        try {
+                            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                            $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
+                            
+                            ReferensiMobilejknBpjsTaskid::updateOrCreate(
+                                [
+                                    'no_rawat' => $noRawat,
+                                    'taskid' => (string) $taskid
+                                ],
+                                [
+                                    'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->toDateTimeString()
+                                ]
+                            );
+                            
+                            Log::info('Updated task ID with adjusted time in database', [
+                                'no_rawat' => $noRawat,
+                                'taskid' => $taskid,
+                                'new_waktu' => $adjustedWaktu
+                            ]);
+                        } catch (Throwable $e) {
+                            Log::error('Failed to save adjusted waktu', [
+                                'error' => $e->getMessage(),
+                                'taskid' => $taskid
+                            ]);
+                        }
+                    }
+                    
+                    return $retryResult;
+                }
+            }
+            
+            // Handle "Waktu tidak valid" error (time outside service date)
+            if (is_string($metaMessage) && strpos($metaMessage, 'Waktu tidak valid') !== false) {
+                Log::warning('Service date validation error, attempting to cap time to end of service date', [
+                    'kodebooking' => $kodebooking,
+                    'taskid' => $taskid,
+                    'current_waktu' => $waktuInt,
+                    'error' => $metaMessage
+                ]);
+                
+                // Cap the time to end of service date and retry
+                if ($serviceDate) {
+                    date_default_timezone_set('UTC');
+                    $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
+                    $cappedWaktu = (int)($cappedTime->timestamp * 1000);
+                    
+                    Log::info('Retrying with time capped to 23:59:59 of service date', [
+                        'current_waktu' => $waktuInt,
+                        'capped_waktu' => $cappedWaktu,
+                        'capped_time' => $cappedTime
+                    ]);
+                    
+                    // Recursive call with capped time
+                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$cappedWaktu, $retryCount + 1);
+                    
+                    // If retry succeeds, save the adjusted time to database
+                    if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
+                        try {
+                            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                            $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
+                            
+                            ReferensiMobilejknBpjsTaskid::updateOrCreate(
+                                [
+                                    'no_rawat' => $noRawat,
+                                    'taskid' => (string) $taskid
+                                ],
+                                [
+                                    'waktu' => Carbon::createFromTimestampMs($cappedWaktu)->toDateTimeString()
+                                ]
+                            );
+                            
+                            Log::info('Updated task ID with end-of-day time in database', [
+                                'no_rawat' => $noRawat,
+                                'taskid' => $taskid,
+                                'new_waktu' => $cappedWaktu
+                            ]);
+                        } catch (Throwable $e) {
+                            Log::error('Failed to save capped waktu', [
+                                'error' => $e->getMessage(),
+                                'taskid' => $taskid
+                            ]);
+                        }
+                    }
+                    
+                    return $retryResult;
+                }
+            }
+
+            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
             if (is_string($metaMessage) && (strpos($metaMessage, "TaskId={$taskid} sudah ada") !== false || strpos($metaMessage, "Ok") !== false)) {
                 try {
                     $cekRecord = ReferensiMobilejknBpjsTaskid::where('no_rawat', $referensi ? $referensi->no_rawat : $kodebooking)

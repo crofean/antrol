@@ -46,6 +46,15 @@ Route::post('/stop-command', [CommandOutputController::class, 'stopCommand'])->n
 Route::get('/command-output/{jobId}', [CommandOutputController::class, 'getOutput'])->name('command.output');
 Route::get('/get-task-ids', [CommandOutputController::class, 'getTaskIds'])->name('command.task-ids');
 Route::get('/debug-command-cache/{jobId?}', [CommandOutputController::class, 'debugCache'])->name('command.debug');
+Route::get('/log-viewer', [CommandOutputController::class, 'showLogViewer'])->name('log.viewer');
+Route::get('/stream-logs', [CommandOutputController::class, 'streamLogs'])->name('logs.stream');
+Route::get('/recent-logs/{lines?}', [CommandOutputController::class, 'getRecentLogs'])->name('logs.recent');
+// Execution tracking (detailed API and streaming)
+Route::get('/execution-details/{jobId}', [CommandOutputController::class, 'getDetailedExecution'])->name('execution.details.api');
+Route::get('/stream-execution/{jobId}', [CommandOutputController::class, 'streamTaskExecution'])->name('execution.stream');
+
+// Execution details view
+Route::get('/execution-viewer/{jobId}', [CommandOutputController::class, 'showExecutionViewer'])->name('execution.viewer');
 
 // RegPeriksa API Routes
 Route::prefix('api/regperiksa')->group(function () {

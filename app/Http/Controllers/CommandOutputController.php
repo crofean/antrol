@@ -29,6 +29,15 @@ class CommandOutputController extends Controller
     public function runCommand(Request $request)
     {
         try {
+            // Log incoming request
+            Log::debug('runCommand called', [
+                'method' => $request->method(),
+                'path' => $request->path(),
+                'has_content_type' => $request->hasHeader('Content-Type'),
+                'content_type' => $request->header('Content-Type'),
+                'all_data' => $request->all()
+            ]);
+
             // Validate input
             try {
                 $request->validate([
@@ -37,6 +46,7 @@ class CommandOutputController extends Controller
                     'dry_run' => 'nullable|boolean',
                 ]);
             } catch (\Exception $validationError) {
+                Log::warning('Validation failed', ['error' => $validationError->getMessage()]);
                 return response()->json([
                     'status' => 'error',
                     'error' => 'Validation failed: ' . $validationError->getMessage()
@@ -53,6 +63,8 @@ class CommandOutputController extends Controller
             // Create a unique job ID
             $jobId = 'bpjs-task-' . uniqid();
             
+            Log::info('Creating job', ['job_id' => $jobId, 'options' => $options]);
+            
             // Initialize the cache entry for immediate access
             Cache::put('command-output:' . $jobId, [
                 'status' => 'pending',
@@ -60,14 +72,17 @@ class CommandOutputController extends Controller
                 'started_at' => now()->toIso8601String(),
             ], 3600);
 
+            Log::debug('Cache entry created', ['job_id' => $jobId]);
+
             // Create the job
             $job = new RunBpjsTaskIdCommand($options, $jobId);
+            
+            Log::debug('Job instance created', ['job_id' => $jobId]);
             
             // Dispatch the job with explicit queue information
             dispatch($job)->onQueue('default');
             
-            // Log the job dispatch
-            Log::info('BPJS Task Command dispatched', [
+            Log::info('BPJS Task Command dispatched successfully', [
                 'job_id' => $jobId,
                 'options' => $options
             ]);
@@ -160,31 +175,48 @@ class CommandOutputController extends Controller
      */
     public function getTaskIds(Request $request)
     {
-        $request->validate([
-            'date_from' => 'nullable|date',
-            'date_to' => 'nullable|date',
-        ]);
+        try {
+            $request->validate([
+                'date_from' => 'nullable|date',
+                'date_to' => 'nullable|date',
+            ]);
 
-        $dateFrom = $request->date_from ? \Carbon\Carbon::parse($request->date_from)->startOfDay() : now()->startOfDay();
-        $dateTo = $request->date_to ? \Carbon\Carbon::parse($request->date_to)->endOfDay() : now()->endOfDay();
+            $dateFrom = $request->date_from ? \Carbon\Carbon::parse($request->date_from)->startOfDay() : now()->startOfDay();
+            $dateTo = $request->date_to ? \Carbon\Carbon::parse($request->date_to)->endOfDay() : now()->endOfDay();
 
-        // Ensure task IDs 1-5 exist with appropriate timing
-        $this->ensureTaskIds($dateFrom, $dateTo);
+            Log::debug('getTaskIds called', [
+                'date_from' => $dateFrom->toDateString(),
+                'date_to' => $dateTo->toDateString()
+            ]);
 
-        // Get all task IDs for the date range
-        $taskIds = ReferensiMobilejknBpjsTaskid::whereBetween('waktu', [$dateFrom, $dateTo])
-            ->orderBy('taskid')
-            ->distinct()
-            ->pluck('taskid')
-            ->values();
+            // Get all task IDs for the date range - without modification
+            $taskIds = ReferensiMobilejknBpjsTaskid::whereBetween('waktu', [$dateFrom, $dateTo])
+                ->orderBy('taskid')
+                ->distinct('taskid')
+                ->pluck('taskid')
+                ->values()
+                ->toArray();
 
-        return response()->json([
-            'task_ids' => $taskIds,
-            'date_range' => [
-                'from' => $dateFrom->toDateString(),
-                'to' => $dateTo->toDateString()
-            ]
-        ]);
+            Log::debug('Task IDs retrieved', ['count' => count($taskIds), 'task_ids' => $taskIds]);
+
+            return response()->json([
+                'task_ids' => $taskIds,
+                'date_range' => [
+                    'from' => $dateFrom->toDateString(),
+                    'to' => $dateTo->toDateString()
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Error in getTaskIds', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'task_ids' => [],
+                'error' => $e->getMessage()
+            ], 200); // Return 200 even on error to prevent UI issues
+        }
     }
 
     /**
@@ -197,50 +229,53 @@ class CommandOutputController extends Controller
      */
     private function ensureTaskIds($dateFrom, $dateTo)
     {
-        // Get all unique raw records for the date range
-        $records = ReferensiMobilejknBpjsTaskid::whereBetween('waktu', [$dateFrom, $dateTo])
-            ->get();
+        try {
+            Log::debug('ensureTaskIds called', [
+                'date_from' => $dateFrom->toDateString(),
+                'date_to' => $dateTo->toDateString()
+            ]);
 
-        // Group by no_rawat to process each record
-        $groupedByNoRawat = $records->groupBy('no_rawat');
+            // Get records with task ID 4 that don't have task ID 5
+            $task4Records = ReferensiMobilejknBpjsTaskid::where('taskid', 4)
+                ->whereBetween('waktu', [$dateFrom, $dateTo])
+                ->cursor(); // Use cursor to avoid loading all at once
 
-        foreach ($groupedByNoRawat as $noRawat => $taskIdRecords) {
-            $taskIds = $taskIdRecords->pluck('taskid')->unique()->values();
-
-            // Check if task ID 4 exists
-            $hasTaskId4 = $taskIds->contains(4);
-            $hasTaskId5 = $taskIds->contains(5);
-
-            if ($hasTaskId4 && !$hasTaskId5) {
-                // Get task ID 4 record to get its timing
-                $taskId4Record = $taskIdRecords->firstWhere('taskid', 4);
+            $createdCount = 0;
+            foreach ($task4Records as $task4Record) {
+                $noRawat = $task4Record->no_rawat;
                 
-                if ($taskId4Record) {
-                    $taskId4Time = \Carbon\Carbon::parse($taskId4Record->waktu);
-                    
+                // Check if task ID 5 already exists for this record
+                $existingTask5 = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat)
+                    ->where('taskid', 5)
+                    ->first();
+
+                if (!$existingTask5) {
                     // Create task ID 5 with time 10-15 minutes after task ID 4
-                    $taskId5Time = $taskId4Time->addMinutes(rand(10, 15));
+                    $task4Time = \Carbon\Carbon::parse($task4Record->waktu);
+                    $task5Time = $task4Time->addMinutes(rand(10, 15));
 
-                    // Check if this specific task ID 5 doesn't exist
-                    $existingTask5 = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat)
-                        ->where('taskid', 5)
-                        ->first();
-
-                    if (!$existingTask5) {
+                    try {
                         ReferensiMobilejknBpjsTaskid::create([
                             'no_rawat' => $noRawat,
                             'taskid' => 5,
-                            'waktu' => $taskId5Time,
+                            'waktu' => $task5Time,
                         ]);
-
-                        Log::info('Task ID 5 created automatically', [
+                        $createdCount++;
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to create task ID 5', [
                             'no_rawat' => $noRawat,
-                            'task_id_4_time' => $taskId4Record->waktu,
-                            'task_id_5_time' => $taskId5Time,
+                            'error' => $e->getMessage()
                         ]);
                     }
                 }
             }
+
+            Log::debug('ensureTaskIds completed', ['created_count' => $createdCount]);
+        } catch (\Exception $e) {
+            Log::error('Error in ensureTaskIds', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 
@@ -366,4 +401,220 @@ class CommandOutputController extends Controller
 
         return $result;
     }
+
+    /**
+     * Show the log viewer page.
+     *
+     * @return \Illuminate\View\View
+     */
+    public function showLogViewer()
+    {
+        return view('mobilejkn.log-viewer');
+    }
+
+    /**
+     * Stream Laravel logs in real-time using Server-Sent Events (SSE).
+     *
+     * @return \Symfony\Component\HttpFoundation\StreamedResponse
+     */
+    public function streamLogs()
+    {
+        $logFile = storage_path('logs/laravel.log');
+
+        $response = response()->stream(function () use ($logFile) {
+            // Keep track of the last read position
+            $lastPosition = Cache::get('log-stream:position', 0);
+            
+            // Read file in chunks
+            $handle = fopen($logFile, 'r');
+            
+            if (!$handle) {
+                echo "event: error\n";
+                echo "data: " . json_encode(['message' => 'Unable to open log file']) . "\n\n";
+                return;
+            }
+
+            // Seek to last position
+            fseek($handle, $lastPosition);
+
+            // Read new lines
+            $newLines = [];
+            while (($line = fgets($handle)) !== false) {
+                $newLines[] = $line;
+            }
+
+            // Save current position
+            $newPosition = ftell($handle);
+            Cache::put('log-stream:position', $newPosition, now()->addDay());
+
+            // Send new lines
+            foreach ($newLines as $line) {
+                $line = trim($line);
+                if (empty($line)) continue;
+
+                // Parse log line for color coding
+                $type = 'info';
+                if (strpos($line, '[ERROR]') !== false || strpos($line, 'error') !== false) {
+                    $type = 'error';
+                } elseif (strpos($line, '[WARNING]') !== false || strpos($line, 'warning') !== false) {
+                    $type = 'warning';
+                } elseif (strpos($line, '[DEBUG]') !== false || strpos($line, 'debug') !== false) {
+                    $type = 'debug';
+                }
+
+                echo "event: log\n";
+                echo "data: " . json_encode([
+                    'line' => $line,
+                    'type' => $type,
+                    'timestamp' => now()->toIso8601String()
+                ]) . "\n\n";
+
+                // Flush output to send immediately
+                echo "\n\n";
+                ob_flush();
+                flush();
+            }
+
+            fclose($handle);
+
+            // Send keep-alive
+            echo "event: keep-alive\n";
+            echo "data: " . json_encode(['timestamp' => now()->toIso8601String()]) . "\n\n";
+
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
+
+        return $response;
+    }
+
+    /**
+     * Get recent log lines as JSON.
+     *
+     * @param  int  $lines
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getRecentLogs($lines = 50)
+    {
+        try {
+            $logFile = storage_path('logs/laravel.log');
+            
+            if (!file_exists($logFile)) {
+                return response()->json(['logs' => [], 'error' => 'Log file not found']);
+            }
+
+            // Read last N lines from file
+            $file = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $recentLines = array_slice($file, max(0, count($file) - $lines));
+
+            $logs = [];
+            foreach ($recentLines as $line) {
+                $line = trim($line);
+                if (empty($line)) continue;
+
+                $type = 'info';
+                if (strpos($line, '[ERROR]') !== false || strpos($line, 'error') !== false) {
+                    $type = 'error';
+                } elseif (strpos($line, '[WARNING]') !== false || strpos($line, 'warning') !== false) {
+                    $type = 'warning';
+                } elseif (strpos($line, '[DEBUG]') !== false || strpos($line, 'debug') !== false) {
+                    $type = 'debug';
+                }
+
+                $logs[] = [
+                    'line' => $line,
+                    'type' => $type,
+                ];
+            }
+
+            return response()->json(['logs' => $logs]);
+        } catch (\Exception $e) {
+            return response()->json(['logs' => [], 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Show execution details viewer page.
+     *
+     * @param  string  $jobId
+     * @return \Illuminate\View\View
+     */
+    public function showExecutionViewer($jobId)
+    {
+        return view('mobilejkn.execution-details', ['jobId' => $jobId]);
+    }
+
+    /**
+     * Get detailed task execution logs with tracking per booking and task ID.
+     *
+     * @param  string  $jobId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getDetailedExecution($jobId)
+    {
+        try {
+            $cacheKey = 'task-execution:' . $jobId;
+            $executionData = Cache::get($cacheKey, [
+                'bookings' => [],
+                'summary' => [
+                    'total_bookings' => 0,
+                    'completed' => 0,
+                    'failed' => 0,
+                    'pending' => 0,
+                ]
+            ]);
+
+            return response()->json($executionData, 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'bookings' => [],
+                'summary' => []
+            ], 200);
+        }
+    }
+
+    /**
+     * Get real-time task execution updates via SSE.
+     *
+     * @param  string  $jobId
+     * @return \Symfony\Component\HttpFoundation\StreamedResponse
+     */
+    public function streamTaskExecution($jobId)
+    {
+        $response = response()->stream(function () use ($jobId) {
+            $lastHash = null;
+            $timeout = now()->addSeconds(300); // 5 minute timeout
+
+            while (now()->isBefore($timeout)) {
+                $cacheKey = 'task-execution:' . $jobId;
+                $executionData = Cache::get($cacheKey, []);
+                
+                $currentHash = hash('md5', json_encode($executionData));
+                
+                if ($currentHash !== $lastHash) {
+                    $lastHash = $currentHash;
+                    echo "event: execution\n";
+                    echo "data: " . json_encode($executionData) . "\n\n";
+                }
+
+                // Send keep-alive every 10 seconds
+                sleep(1);
+                echo "event: keep-alive\n";
+                echo "data: " . json_encode(['timestamp' => now()->toIso8601String()]) . "\n\n";
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
+
+        return $response;
+    }
+
 }
