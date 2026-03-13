@@ -28,38 +28,46 @@ class CommandOutputController extends Controller
      */
     public function runCommand(Request $request)
     {
-        $request->validate([
-            'date_from' => 'nullable|date',
-            'date_to' => 'nullable|date',
-            'dry_run' => 'nullable|boolean',
-        ]);
-
-        // Create options array for the command
-        $options = [
-            'date-from' => $request->date_from,
-            'date-to' => $request->date_to,
-            'dry-run' => $request->has('dry_run') ? $request->dry_run : false,
-        ];
-
-        // Create a unique job ID
-        $jobId = 'bpjs-task-' . uniqid();
-        
-        // Initialize the cache entry for immediate access
-        Cache::put('command-output:' . $jobId, [
-            'status' => 'pending',
-            'output' => ['Job initialized, waiting to start...'],
-            'started_at' => now()->toIso8601String(),
-        ], 3600);
-
-        // Create the job
-        $job = new RunBpjsTaskIdCommand($options, $jobId);
-        
-        // Dispatch the job with explicit queue information
         try {
+            // Validate input
+            try {
+                $request->validate([
+                    'date_from' => 'nullable|date',
+                    'date_to' => 'nullable|date',
+                    'dry_run' => 'nullable|boolean',
+                ]);
+            } catch (\Exception $validationError) {
+                return response()->json([
+                    'status' => 'error',
+                    'error' => 'Validation failed: ' . $validationError->getMessage()
+                ], 422);
+            }
+
+            // Create options array for the command
+            $options = [
+                'date-from' => $request->date_from ?? null,
+                'date-to' => $request->date_to ?? null,
+                'dry-run' => $request->has('dry_run') ? (bool)$request->dry_run : false,
+            ];
+
+            // Create a unique job ID
+            $jobId = 'bpjs-task-' . uniqid();
+            
+            // Initialize the cache entry for immediate access
+            Cache::put('command-output:' . $jobId, [
+                'status' => 'pending',
+                'output' => ['Job initialized, waiting to start...'],
+                'started_at' => now()->toIso8601String(),
+            ], 3600);
+
+            // Create the job
+            $job = new RunBpjsTaskIdCommand($options, $jobId);
+            
+            // Dispatch the job with explicit queue information
             dispatch($job)->onQueue('default');
             
             // Log the job dispatch
-            \Illuminate\Support\Facades\Log::info('BPJS Task Command dispatched', [
+            Log::info('BPJS Task Command dispatched', [
                 'job_id' => $jobId,
                 'options' => $options
             ]);
@@ -70,19 +78,31 @@ class CommandOutputController extends Controller
                 'queue_info' => [
                     'message' => 'Job dispatched to queue. If it stays in "pending" state, ensure queue workers are running with: php artisan queue:work',
                 ]
-            ]);
+            ], 200);
         } catch (\Exception $e) {
-            // If there was an error dispatching the job
-            $errorOutput = Cache::get('command-output:' . $jobId);
-            $errorOutput['status'] = 'failed';
-            $errorOutput['error'] = 'Failed to dispatch job: ' . $e->getMessage();
-            $errorOutput['output'][] = 'Error: ' . $e->getMessage();
-            Cache::put('command-output:' . $jobId, $errorOutput, 3600);
+            // Log the full error for debugging
+            Log::error('Error in runCommand', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
+
+            // Create a job ID for error tracking
+            $jobId = 'bpjs-task-' . uniqid();
+            
+            // Store error in cache
+            Cache::put('command-output:' . $jobId, [
+                'status' => 'failed',
+                'error' => $e->getMessage(),
+                'output' => ['Error: ' . $e->getMessage()],
+                'started_at' => now()->toIso8601String(),
+            ], 3600);
             
             return response()->json([
                 'status' => 'error',
                 'job_id' => $jobId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'debug_info' => env('APP_DEBUG') ? $e->getTraceAsString() : null
             ], 500);
         }
     }

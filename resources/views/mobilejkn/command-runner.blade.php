@@ -58,7 +58,7 @@
 
                     <div class="flex items-center gap-3 p-4 glass rounded-2xl">
                         <div class="relative inline-flex h-6 w-11 items-center rounded-full bg-slate-200 dark:bg-slate-800 transition-colors pointer-events-none">
-                            <input type="checkbox" id="dry_run" name="dry_run" checked class="sr-only peer pointer-events-auto">
+                            <input type="checkbox" id="dry_run" name="dry_run" class="sr-only peer pointer-events-auto">
                             <div class="peer-checked:bg-amber-600 absolute inset-0 rounded-full transition-colors"></div>
                             <span class="absolute left-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5 shadow-sm"></span>
                         </div>
@@ -191,14 +191,24 @@
             headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
             body: JSON.stringify(payload)
         })
-        .then(r => r.json())
+        .then(async r => {
+            const data = await r.json();
+            if (!r.ok) {
+                throw new Error(data.error || `HTTP ${r.status}: ${r.statusText}`);
+            }
+            return data;
+        })
         .then(data => {
             jobId = data.job_id;
+            output.innerHTML = `<span class="text-emerald-400">[info]</span> Job ID: ${jobId}\n`;
             outputInterval = setInterval(fetchOutput, 1000);
             if (data.queue_info?.message) output.innerHTML += `<span class="text-blue-400">[info]</span> ${data.queue_info.message}\n`;
         })
         .catch(err => {
+            console.error('Failed to start sync engine:', err);
             output.innerHTML += `<span class="text-rose-500">[error]</span> Failed to start sync engine.\n`;
+            output.innerHTML += `<span class="text-rose-400">[error]</span> ${err.message}\n`;
+            output.innerHTML += `<span class="text-amber-400">[debug]</span> Check browser console for more details.\n`;
             updateStatus('failed');
         });
     };
