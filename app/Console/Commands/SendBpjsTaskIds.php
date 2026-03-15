@@ -24,6 +24,7 @@ class SendBpjsTaskIds extends Command
     protected $signature = 'bpjs:send-task-ids
                             {--date-from= : Start date (Y-m-d)}
                             {--date-to= : End date (Y-m-d)}
+                            {--mjkn : Run only for Mobile JKN references}
                             {--dry-run : Show what would be processed without actually sending}';
 
     /**
@@ -71,6 +72,11 @@ class SendBpjsTaskIds extends Command
         // Exclude specific poli if configured
         if (!empty($excludePoliArray)) {
             $query->whereNotIn('kd_poli', $excludePoliArray);
+        }
+
+        // Run only for Mobile JKN references if requested
+        if ($this->option('mjkn')) {
+            $query->has('referensiMobilejknBpjs');
         }
 
         $patients = $query->get();
@@ -122,7 +128,8 @@ class SendBpjsTaskIds extends Command
             $this->line("No referensi data for patient: {$patient->no_rawat}");
         }
 
-        $kodebooking = $patient->no_rawat;
+        // Use nobooking if referensi exists, otherwise use no_rawat
+        $kodebooking = $referensi ? $referensi->nobooking : $patient->no_rawat;
 
         // Prepare patient data for antrean
         // $patientData = $this->preparePatientData($patient, $referensi);
@@ -166,10 +173,24 @@ class SendBpjsTaskIds extends Command
 
             if ($result['success']) {
                 $stats['task_success']++;
-                $this->line("Task ID {$taskId} sent successfully for: {$kodebooking}");
+                // Try to get success message from BPJS metadata
+                $successMessage = 'Ok';
+                if (isset($result['data']['metadata']['message'])) {
+                    $successMessage = $result['data']['metadata']['message'];
+                } elseif (isset($result['metadata']['message'])) {
+                    $successMessage = $result['metadata']['message'];
+                }
+                $this->line("Task ID {$taskId} sent successfully for: {$kodebooking} - " . $successMessage);
             } else {
                 $stats['task_failed']++;
-                $this->line("Failed to send Task ID {$taskId} for: {$kodebooking} - " . ($result['error'] ?? 'Unknown error'));
+                // Try to get detailed error message from BPJS metadata
+                $errorMessage = $result['error'] ?? 'Unknown error';
+                if (isset($result['data']['metadata']['message'])) {
+                    $errorMessage = $result['data']['metadata']['message'];
+                } elseif (isset($result['metadata']['message'])) {
+                    $errorMessage = $result['metadata']['message'];
+                }
+                $this->line("Failed to send Task ID {$taskId} for: {$kodebooking} - " . $errorMessage);
             }
         }
     }
@@ -244,7 +265,7 @@ class SendBpjsTaskIds extends Command
             $nomorAntrean = ($kodepoli ? $kodepoli : $patient->kd_poli) . '-' . $angkaAntrean;
 
             return [
-                'kodebooking' => $patient->no_rawat,
+                'kodebooking' => $referensi ? $referensi->nobooking : $patient->no_rawat,
                 'jenispasien' => 'JKN',
                 'nomorkartu' => $pasien->no_peserta ?? '',
                 'nik' => $pasien->no_ktp ?? '',
@@ -290,7 +311,7 @@ class SendBpjsTaskIds extends Command
             }
             
             return [
-                'kodebooking' => $patient->no_rawat,
+                'kodebooking' => $referensi ? $referensi->nobooking : $patient->no_rawat,
                 'jenispasien' => 'JKN',
                 'nomorkartu' => $pasien->no_peserta ?? '',
                 'nik' => $pasien->no_ktp ?? '',

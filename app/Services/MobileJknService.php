@@ -98,9 +98,27 @@ class MobileJknService
         return hash_hmac('sha256', $data, $this->secretKey, true);
     }
 
+    /**
+     * Get the proper kode booking for a patient registration.
+     * If patient is on referensi pendaftaran mobile jkn, use nobooking.
+     * If patient is only on reg periksa, use no_rawat.
+     *
+     * @param string $noRawat The registration number
+     * @return string The booking code (nobooking or no_rawat)
+     */
+    public function getKodeBooking(string $noRawat): string
+    {
+        // Try to find if patient has a referensi (referensi pendaftaran mobile jkn)
+        $referensi = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->first();
+        
+        // If referensi exists, use nobooking, otherwise use no_rawat
+        return $referensi ? $referensi->nobooking : $noRawat;
+    }
+
 
     /**
      * Get timestamp for a specific task ID from database
+     * Ensures the returned time is within the service date
      *
      * @param string $kodebooking
      * @param int $taskid
@@ -109,22 +127,46 @@ class MobileJknService
     public function getTaskTimestampFromDatabase(string $kodebooking, int $taskid): ?string
     {
         try {
+            $rawTimestamp = null;
             switch ($taskid) {
                 case 3:
-                    return $this->getTask3Timestamp($kodebooking);
+                    $rawTimestamp = $this->getTask3Timestamp($kodebooking);
+                    break;
                 case 4:
-                    return $this->getTask4Timestamp($kodebooking);
+                    $rawTimestamp = $this->getTask4Timestamp($kodebooking);
+                    break;
                 case 5:
-                    return $this->getTask5Timestamp($kodebooking);
+                    $rawTimestamp = $this->getTask5Timestamp($kodebooking);
+                    break;
                 case 6:
-                    return $this->getTask6Timestamp($kodebooking);
+                    $rawTimestamp = $this->getTask6Timestamp($kodebooking);
+                    break;
                 case 7:
-                    return $this->getTask7Timestamp($kodebooking);
+                    $rawTimestamp = $this->getTask7Timestamp($kodebooking);
+                    break;
                 case 99:
-                    return (string) now()->timestamp * 1000; // Current time in milliseconds
+                    $rawTimestamp = (string) now()->timestamp * 1000; // Current time in milliseconds
+                    break;
                 default:
                     return null;
             }
+            
+            // If we got a timestamp, ensure it's within the service date
+            if ($rawTimestamp !== null) {
+                $serviceDate = $this->getServiceDate($kodebooking);
+                if ($serviceDate) {
+                    $adjustedTimestamp = $this->ensureTimeWithinServiceDate((int)$rawTimestamp, $serviceDate);
+                    Log::debug('Task timestamp validated and adjusted if needed', [
+                        'kodebooking' => $kodebooking,
+                        'taskid' => $taskid,
+                        'original' => $rawTimestamp,
+                        'adjusted' => $adjustedTimestamp
+                    ]);
+                    return (string)$adjustedTimestamp;
+                }
+            }
+            
+            return $rawTimestamp;
         } catch (Exception $e) {
             Log::error('Error getting task timestamp from database', [
                 'kodebooking' => $kodebooking,
@@ -166,20 +208,18 @@ class MobileJknService
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         if ($referensi) $kodebooking = $referensi->no_rawat;
 
+        // Get service date to ensure times are on the correct date
+        $serviceDate = $this->getServiceDate($kodebooking);
+
         $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('petugas') // nip exists in petugas table
         ->orderBy('jam_rawat', 'asc')
         ->first();
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
-            // Add a random offset between 5 and 10 minutes to the recorded jam_rawat
-            // try {
-            //     $offsetMinutes = random_int(5, 10);
-            // } catch (\Throwable $e) {
-            //     $offsetMinutes = rand(5, 10);
-            // }
-            // $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+            // Use service date for the date part, just the time from jam_rawat
+            $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
+            $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString());
             return (string) ($waktu->timestamp * 1000);
         } else {
             $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
@@ -187,7 +227,8 @@ class MobileJknService
                 ->first();
 
             if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-                $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+                $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
+                $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString());
                 try {
                     $offsetMinutes = random_int(5, 10);
                 } catch (Throwable $e) {
@@ -196,6 +237,19 @@ class MobileJknService
                 $waktu = $waktu->copy()->addMinutes($offsetMinutes);
                 return (string) ($waktu->timestamp * 1000);
             }
+        }
+
+        // Fallback: use task 3 time + 5-10 minutes if task 4 not available
+        $task3Time = $this->getTask3Timestamp($kodebooking);
+        if ($task3Time) {
+            try {
+                $offsetMinutes = random_int(5, 10);
+            } catch (Throwable $e) {
+                $offsetMinutes = rand(5, 10);
+            }
+            $waktu = Carbon::createFromTimestamp((int)($task3Time / 1000));
+            $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -203,11 +257,15 @@ class MobileJknService
 
     /**
      * Get task 5 timestamp - from pemeriksaan_ralan where nip is in dokter
+     * If not available or on wrong date, fallback to task 4 time + 5-10 minutes
      */
     protected function getTask5Timestamp(string $kodebooking): ?string
     {
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         if ($referensi) $kodebooking = $referensi->no_rawat;
+
+        // Get service date to ensure times are on the correct date
+        $serviceDate = $this->getServiceDate($kodebooking);
 
         $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
         ->whereHas('dokter') // nip exists in dokter table
@@ -215,30 +273,61 @@ class MobileJknService
         ->first();
 
         if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
-            // Add a random offset between 5 and 10 minutes to the recorded jam_rawat
-            // try {
-            //     $offsetMinutes = random_int(5, 10);
-            // } catch (\Throwable $e) {
-            //     $offsetMinutes = rand(5, 10);
-            // }
-            // $waktu = $waktu->copy()->addMinutes($offsetMinutes);
-            return (string) ($waktu->timestamp * 1000);
+            // Use service date for the date part, just the time from jam_rawat
+            $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
+            $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+            
+            // Validate that the time is on the correct service date
+            if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
+                Log::warning('Task 5: Timestamp date mismatch, using fallback', [
+                    'kodebooking' => $kodebooking,
+                    'calculated_date' => $waktu->toDateString(),
+                    'service_date' => $serviceDate->toDateString()
+                ]);
+                // Fall through to use task 4 + offset
+            } else {
+                return (string) ($waktu->timestamp * 1000);
+            }
         } else {
             $pemeriksaan = PemeriksaanRalan::where('no_rawat', $kodebooking)
                 ->orderBy('jam_rawat', 'desc')
                 ->first();
 
             if ($pemeriksaan && $pemeriksaan->jam_rawat) {
-                $waktu = Carbon::parse(str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan) . ' ' . $pemeriksaan->jam_rawat->toTimeString());
-                try {
-                    $offsetMinutes = random_int(5, 10);
-                } catch (Throwable $e) {
-                    $offsetMinutes = rand(5, 10);
+                $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
+                $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString());
+                
+                // Validate that the time is on the correct service date
+                if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
+                    Log::warning('Task 5 (alt): Timestamp date mismatch, using fallback', [
+                        'kodebooking' => $kodebooking,
+                        'calculated_date' => $waktu->toDateString(),
+                        'service_date' => $serviceDate->toDateString()
+                    ]);
+                    // Fall through to use task 4 + offset
+                } else {
+                    try {
+                        $offsetMinutes = random_int(5, 10);
+                    } catch (Throwable $e) {
+                        $offsetMinutes = rand(5, 10);
+                    }
+                    $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+                    return (string) ($waktu->timestamp * 1000);
                 }
-                $waktu = $waktu->copy()->addMinutes($offsetMinutes);
-                return (string) ($waktu->timestamp * 1000);
             }
+        }
+
+        // Fallback: use task 4 time + 5-10 minutes if task 5 not available or date mismatch
+        $task4Time = $this->getTask4Timestamp($kodebooking);
+        if ($task4Time) {
+            try {
+                $offsetMinutes = random_int(5, 10);
+            } catch (Throwable $e) {
+                $offsetMinutes = rand(5, 10);
+            }
+            $waktu = Carbon::createFromTimestamp((int)($task4Time / 1000));
+            $waktu = $waktu->copy()->addMinutes($offsetMinutes);
+            return (string) ($waktu->timestamp * 1000);
         }
 
         return null;
@@ -246,18 +335,48 @@ class MobileJknService
 
     /**
      * Get task 6 timestamp - from resep_obat jam
+     * If not available or on wrong date, fallback to task 4 time + 5-10 minutes
      */
     protected function getTask6Timestamp(string $kodebooking): ?string
     {
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         if ($referensi) $kodebooking = $referensi->no_rawat;
 
-        $resep = ResepObat::where('tgl_perawatan', $kodebooking)
-        ->orderBy('jam', 'desc')
-        ->first();
+        // Get service date to ensure times are on the correct date
+        $serviceDate = $this->getServiceDate($kodebooking);
+
+        $resep = ResepObat::where('no_rawat', $kodebooking)
+            ->orderBy('jam', 'desc')
+            ->first();
 
         if ($resep && $resep->jam) {
-            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $resep->tgl_perawatan) . ' ' . $resep->jam->toTimeString());
+            // Use service date for the date part, just the time from jam
+            $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $resep->tgl_perawatan));
+            $waktu = Carbon::parse($datePart . ' ' . $resep->jam->toTimeString());
+            
+            // Validate that the time is on the correct service date
+            if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
+                Log::warning('Task 6: Timestamp date mismatch, using fallback', [
+                    'kodebooking' => $kodebooking,
+                    'calculated_date' => $waktu->toDateString(),
+                    'service_date' => $serviceDate->toDateString()
+                ]);
+                // Fall through to use task 4 + offset
+            } else {
+                return (string) ($waktu->timestamp * 1000);
+            }
+        }
+
+        // Fallback: use task 4 time + 5-10 minutes if task 6 not available or date mismatch
+        $task4Time = $this->getTask4Timestamp($kodebooking);
+        if ($task4Time) {
+            try {
+                $offsetMinutes = random_int(5, 10);
+            } catch (Throwable $e) {
+                $offsetMinutes = rand(5, 10);
+            }
+            $waktu = Carbon::createFromTimestamp((int)($task4Time / 1000));
+            $waktu = $waktu->copy()->addMinutes($offsetMinutes);
             return (string) ($waktu->timestamp * 1000);
         }
 
@@ -271,13 +390,18 @@ class MobileJknService
     {
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         if ($referensi) $kodebooking = $referensi->no_rawat;
+        
+        // Get service date to ensure times are on the correct date
+        $serviceDate = $this->getServiceDate($kodebooking);
 
         $resep = ResepObat::where('no_rawat', $kodebooking)
         ->orderBy('jam_penyerahan', 'desc')
         ->first();
 
         if ($resep && $resep->jam_penyerahan) {
-            $waktu = Carbon::parse(str_replace(' 00:00:00', '', $resep->tgl_penyerahan) . ' ' . $resep->jam_penyerahan->toTimeString());
+            // Use service date for the date part, just the time from jam_penyerahan
+            $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $resep->tgl_penyerahan));
+            $waktu = Carbon::parse($datePart . ' ' . $resep->jam_penyerahan->toTimeString());
             return (string) ($waktu->timestamp * 1000);
         }
 
@@ -327,7 +451,39 @@ class MobileJknService
     private function getServiceDate(string $kodebooking): ?Carbon
     {
         try {
-            // Try to extract date from kodebooking format (YYYY/MM/DD/...)
+            // First priority: Try to get from database (registration date)
+            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+            
+            if ($referensi && $referensi->no_rawat) {
+                $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
+                
+                if ($regPeriksa && $regPeriksa->tgl_registrasi) {
+                    $serviceDate = Carbon::parse($regPeriksa->tgl_registrasi);
+                    Log::debug('Service date from reg_periksa (by nobooking)', [
+                        'kodebooking' => $kodebooking,
+                        'no_rawat' => $referensi->no_rawat,
+                        'service_date' => $serviceDate
+                    ]);
+                    return $serviceDate->startOfDay();
+                }
+            }
+            
+            // Second priority: Try to get from reg_periksa directly using kodebooking as no_rawat
+            $regPeriksa = RegPeriksa::where('no_rawat', $kodebooking)->first();
+            if ($regPeriksa && $regPeriksa->tgl_registrasi) {
+                $serviceDate = Carbon::parse($regPeriksa->tgl_registrasi);
+                Log::debug('Service date from reg_periksa (direct)', [
+                    'kodebooking' => $kodebooking,
+                    'service_date' => $serviceDate
+                ]);
+                return $serviceDate->startOfDay();
+            }
+        } catch (\Exception $e) {
+            Log::debug('Failed to get service date from database', ['error' => $e->getMessage()]);
+        }
+        
+        // Fallback: Extract date from kodebooking format (YYYY/MM/DD/...)
+        try {
             $parts = explode('/', $kodebooking);
             if (count($parts) >= 3) {
                 $year = $parts[0];
@@ -336,7 +492,7 @@ class MobileJknService
                 
                 if (is_numeric($year) && is_numeric($month) && is_numeric($day)) {
                     $serviceDate = Carbon::createFromDate($year, $month, $day);
-                    Log::debug('Service date extracted from kodebooking', [
+                    Log::debug('Service date extracted from kodebooking (fallback)', [
                         'kodebooking' => $kodebooking,
                         'service_date' => $serviceDate
                     ]);
@@ -345,26 +501,6 @@ class MobileJknService
             }
         } catch (\Exception $e) {
             Log::debug('Failed to extract service date from kodebooking', ['error' => $e->getMessage()]);
-        }
-        
-        // Fallback: try to get from database
-        try {
-            $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
-            
-            if ($referensi && $referensi->no_rawat) {
-                $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
-                
-                if ($regPeriksa && $regPeriksa->tgl_registrasi) {
-                    $serviceDate = Carbon::parse($regPeriksa->tgl_registrasi);
-                    Log::debug('Service date from database', [
-                        'kodebooking' => $kodebooking,
-                        'service_date' => $serviceDate
-                    ]);
-                    return $serviceDate->startOfDay();
-                }
-            }
-        } catch (\Exception $e) {
-            Log::debug('Failed to get service date from database', ['error' => $e->getMessage()]);
         }
         
         return null;
@@ -379,36 +515,36 @@ class MobileJknService
      */
     private function ensureTimeWithinServiceDate(int $waktuMs, Carbon $serviceDate): int
     {
-        // Set UTC for consistent comparisons
-        date_default_timezone_set('UTC');
+        // Use proper timezone handling on Carbon instances instead of changing global state
+        $localTz = config('app.timezone', 'Asia/Jakarta');
         
-        $waktuTime = Carbon::createFromTimestampMs($waktuMs)->setTimezone('UTC');
-        $serviceDateStart = $serviceDate->copy()->startOfDay()->setTimezone('UTC');
-        $serviceDateEnd = $serviceDate->copy()->endOfDay()->setTimezone('UTC');
+        $waktuTime = Carbon::createFromTimestampMs($waktuMs)->setTimezone($localTz);
+        $serviceDateStart = $serviceDate->copy()->startOfDay()->setTimezone($localTz);
+        $serviceDateEnd = $serviceDate->copy()->endOfDay()->setTimezone($localTz);
         
         Log::debug('Time validation check', [
-            'waktu_time' => $waktuTime,
-            'service_date_start' => $serviceDateStart,
-            'service_date_end' => $serviceDateEnd
+            'waktu_time' => $waktuTime->toDateTimeString(),
+            'service_date_start' => $serviceDateStart->toDateTimeString(),
+            'service_date_end' => $serviceDateEnd->toDateTimeString()
         ]);
         
         // If time is before service date, set to start of service date
         if ($waktuTime->isBefore($serviceDateStart)) {
             Log::warning('Time is before service date, adjusting to service date start', [
-                'original_time' => $waktuTime,
-                'service_date' => $serviceDateStart,
-                'adjusted_to' => $serviceDateStart
+                'original_time' => $waktuTime->toDateTimeString(),
+                'service_date' => $serviceDateStart->toDateTimeString(),
+                'adjusted_to' => $serviceDateStart->toDateTimeString()
             ]);
             return (int)($serviceDateStart->timestamp * 1000);
         }
         
         // If time is after service date, set to 23:59:59 of service date (not quite end of day)
         if ($waktuTime->isAfter($serviceDateEnd)) {
-            $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
+            $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone($localTz);
             Log::warning('Time is after service date, adjusting to end of service date', [
-                'original_time' => $waktuTime,
-                'service_date' => $serviceDateEnd,
-                'adjusted_to' => $cappedTime
+                'original_time' => $waktuTime->toDateTimeString(),
+                'service_date' => $serviceDateEnd->toDateTimeString(),
+                'adjusted_to' => $cappedTime->toDateTimeString()
             ]);
             return (int)($cappedTime->timestamp * 1000);
         }
@@ -426,13 +562,13 @@ class MobileJknService
      */
     private function ensureTimeAfterPrevious(int $currentWaktu, int $previousWaktu, ?Carbon $serviceDate = null): int
     {
-        date_default_timezone_set('UTC');
+        $localTz = config('app.timezone', 'Asia/Jakarta');
         
         $minTimeAfterPrevious = $previousWaktu + (10 * 60 * 1000); // 10 minutes in milliseconds
         
         // Check if the time is within service date if provided
         if ($serviceDate) {
-            $serviceDateEnd = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
+            $serviceDateEnd = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone($localTz);
             $serviceDateEndMs = (int)($serviceDateEnd->timestamp * 1000);
             
             // If adding 10 minutes would exceed service date, cap it to end of day minus 1 minute
@@ -493,18 +629,19 @@ class MobileJknService
      * @param string|null $waktu Timestamp in milliseconds, if null will get from database
      * @return array
      */
-    public function updateTaskId(string $kodebooking, int $taskid, ?string $waktu = null, int $retryCount = 0): array
+    public function updateTaskId(string $kodebooking, int $taskid, ?string $waktu = null, int $retryCount = 0, ?string $lastBpjsError = null): array
     {
         // Prevent infinite recursion
         if ($retryCount > 3) {
             Log::error('Max retry count exceeded', [
                 'kodebooking' => $kodebooking,
                 'taskid' => $taskid,
-                'retry_count' => $retryCount
+                'retry_count' => $retryCount,
+                'last_bpjs_error' => $lastBpjsError
             ]);
             return [
                 'success' => false,
-                'error' => 'Max retry attempts exceeded',
+                'error' => $lastBpjsError ?? 'Max retry attempts exceeded',
                 'status_code' => 500
             ];
         }
@@ -562,7 +699,6 @@ class MobileJknService
                 $waktu = (string)$waktuInt;
             }
 
-            date_default_timezone_set('UTC');
             // Generate timestamp and signature
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
@@ -627,18 +763,70 @@ class MobileJknService
                     'error' => $metaMessage
                 ]);
                 
-                // Get previous task waktu and add 10+ minutes
-                $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
+                // Hit list task API to get the exact time registered in BPJS server
+                $listTaskResult = $this->getListTask($kodebooking);
+                $bestWaktuObj = null;
+                
+                if ($listTaskResult['success'] && is_array($listTaskResult['data'])) {
+                    // Find actual previous task time registered in BPJS
+                    $bpjsTasks = $listTaskResult['data'];
+                    foreach ($bpjsTasks as $bt) {
+                        if (isset($bt['taskid']) && $bt['taskid'] < $taskid) {
+                            if ($bestWaktuObj === null || $bt['taskid'] > $bestWaktuObj['taskid']) {
+                                $bestWaktuObj = $bt;
+                            }
+                        }
+                    }
+                }
+                
+                $previousWaktu = null;
+                
+                if ($bestWaktuObj !== null && isset($bestWaktuObj['waktu'])) {
+                    // Extracting the timestamp string correctly
+                    // Format returned by BPJS is "DD-MM-YYYY HH:mm:ss WIB" for time
+                    try {
+                        $timeString = str_replace(' WIB', '', $bestWaktuObj['waktu']);
+                        $time = \Carbon\Carbon::createFromFormat('d-m-Y H:i:s', $timeString, 'Asia/Jakarta');
+                        $previousWaktu = $time->timestamp * 1000;
+                        Log::info('Found previous task time natively via BPJS getListTask', [
+                            'kodebooking' => $kodebooking,
+                            'prev_task_id' => $bestWaktuObj['taskid'],
+                            'bpjs_waktu_str' => $bestWaktuObj['waktu'],
+                            'parsed_timestamp_ms' => $previousWaktu
+                        ]);
+                    } catch (\Exception $e) {
+                         Log::error("Failed to parse BPJS returned time", ['error' => $e->getMessage()]);
+                    }
+                }
+                
+                // Fallback to internal tracker if API request/parsing failed
+                if ($previousWaktu === null) {
+                    $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
+                }
+                
+                // Fallback if previous task not in local DB
+                if ($previousWaktu === null) {
+                    $prevDbTime = $this->getTaskTimestampFromDatabase($kodebooking, $taskid - 1);
+                    if ($prevDbTime) {
+                        $previousWaktu = (int)$prevDbTime;
+                    }
+                }
+                
                 if ($previousWaktu !== null) {
-                    $adjustedWaktu = $previousWaktu + (10 * 60 * 1000) + 1000; // 10 minutes + 1 second buffer
+                    try {
+                        $offsetMinutes = random_int(5, 10);
+                    } catch (Throwable $e) {
+                        $offsetMinutes = rand(5, 10);
+                    }
+                    $adjustedWaktu = $previousWaktu + ($offsetMinutes * 60 * 1000);
                     
                     Log::info('Retrying with adjusted time', [
                         'previous_waktu' => $previousWaktu,
                         'adjusted_waktu' => $adjustedWaktu
                     ]);
                     
-                    // Recursive call with adjusted time
-                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1);
+                    // Recursive call with adjusted time, passing the BPJS error message
+                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1, $metaMessage);
                     
                     // If retry succeeds, save the adjusted time to database
                     if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
@@ -652,7 +840,7 @@ class MobileJknService
                                     'taskid' => (string) $taskid
                                 ],
                                 [
-                                    'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->toDateTimeString()
+                                    'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                                 ]
                             );
                             
@@ -675,27 +863,83 @@ class MobileJknService
             
             // Handle "Waktu tidak valid" error (time outside service date)
             if (is_string($metaMessage) && strpos($metaMessage, 'Waktu tidak valid') !== false) {
-                Log::warning('Service date validation error, attempting to cap time to end of service date', [
+                Log::warning('Service date validation error, attempting to adjust time based on BPJS error', [
                     'kodebooking' => $kodebooking,
                     'taskid' => $taskid,
                     'current_waktu' => $waktuInt,
                     'error' => $metaMessage
                 ]);
                 
-                // Cap the time to end of service date and retry
-                if ($serviceDate) {
-                    date_default_timezone_set('UTC');
-                    $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone('UTC');
-                    $cappedWaktu = (int)($cappedTime->timestamp * 1000);
-                    
+                // Try to extract expected service date from error message
+                $expectedDateStr = null;
+                if (preg_match('/Tanggal pelayanan untuk Kode Booking tersebut adalah \((.*?)\)/', $metaMessage, $matches)) {
+                    $expectedDateStr = $matches[1];
+                }
+
+                $adjustedWaktu = null;
+                
+                if ($expectedDateStr) {
+                    try {
+                        $expectedDate = Carbon::parse($expectedDateStr);
+                        
+                        // For any task, try to get previous task's time on this correct date
+                        $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
+                        
+                        // Fallback if previous task not in local DB
+                        if ($previousWaktu === null) {
+                            $prevDbTime = $this->getTaskTimestampFromDatabase($kodebooking, $taskid - 1);
+                            if ($prevDbTime) {
+                                $previousWaktu = (int)$prevDbTime;
+                            }
+                        }
+                        
+                        if ($previousWaktu !== null) {
+                            // If previous task exists, just add 5-10 minutes to it
+                            try {
+                                $offsetMinutes = random_int(5, 10);
+                            } catch (Throwable $e) {
+                                $offsetMinutes = rand(5, 10);
+                            }
+                            $prevTime = Carbon::createFromTimestampMs($previousWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'));
+                            
+                            // Only use previous time if it's on the expected date
+                            if ($prevTime->toDateString() === $expectedDate->toDateString()) {
+                                $adjustedWaktu = (int)($prevTime->copy()->addMinutes($offsetMinutes)->timestamp * 1000);
+                            } else {
+                                // Previous time is on wrong date, construct new time on expected date
+                                $adjustedWaktu = (int)($expectedDate->copy()->setTime($prevTime->hour, $prevTime->minute, $prevTime->second)->addMinutes($offsetMinutes)->timestamp * 1000);
+                            }
+                        } else {
+                            // No previous task, just guess a reasonable time on the expected date
+                            // e.g. 08:00 AM + random offset based on task id
+                            $adjustedWaktu = (int)($expectedDate->copy()->setTime(8 + $taskid, rand(0, 59), rand(0, 59))->timestamp * 1000);
+                        }
+                        
+                        Log::info('Adjusting waktu based on exact BPJS expected date', [
+                            'expected_date' => $expectedDateStr,
+                            'new_waktu' => $adjustedWaktu,
+                            'new_time' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Failed to parse date from BPJS error message', ['error' => $e->getMessage()]);
+                    }
+                }
+                
+                // If we couldn't adjust based on message date, fallback to capping to our known service date
+                if ($adjustedWaktu === null && $serviceDate) {
+                    $localTz = config('app.timezone', 'Asia/Jakarta');
+                    $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone($localTz);
+                    $adjustedWaktu = (int)($cappedTime->timestamp * 1000);
                     Log::info('Retrying with time capped to 23:59:59 of service date', [
                         'current_waktu' => $waktuInt,
-                        'capped_waktu' => $cappedWaktu,
-                        'capped_time' => $cappedTime
+                        'capped_waktu' => $adjustedWaktu,
+                        'capped_time' => $cappedTime->toDateTimeString()
                     ]);
-                    
-                    // Recursive call with capped time
-                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$cappedWaktu, $retryCount + 1);
+                }
+                
+                if ($adjustedWaktu !== null) {
+                    // Recursive call with adjusted time, passing the BPJS error message
+                    $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1, $metaMessage);
                     
                     // If retry succeeds, save the adjusted time to database
                     if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
@@ -709,17 +953,17 @@ class MobileJknService
                                     'taskid' => (string) $taskid
                                 ],
                                 [
-                                    'waktu' => Carbon::createFromTimestampMs($cappedWaktu)->toDateTimeString()
+                                    'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                                 ]
                             );
                             
-                            Log::info('Updated task ID with end-of-day time in database', [
+                            Log::info('Updated task ID with adjusted time in database after BPJS date correction', [
                                 'no_rawat' => $noRawat,
                                 'taskid' => $taskid,
-                                'new_waktu' => $cappedWaktu
+                                'new_waktu' => $adjustedWaktu
                             ]);
                         } catch (Throwable $e) {
-                            Log::error('Failed to save capped waktu', [
+                            Log::error('Failed to save adjusted waktu', [
                                 'error' => $e->getMessage(),
                                 'taskid' => $taskid
                             ]);
@@ -727,6 +971,35 @@ class MobileJknService
                     }
                     
                     return $retryResult;
+                }
+            }
+
+            // Handle "Kode Booking tidak ditemukan" by attempting to recreate antrean
+            if (is_string($metaMessage) && strpos($metaMessage, 'Kode Booking tidak ditemukan') !== false) {
+                Log::warning('BPJS reports Kode Booking not found, attempting to recreate antrean', [
+                    'kodebooking' => $kodebooking,
+                    'taskid' => $taskid,
+                    'waktu' => $waktu
+                ]);
+
+                try {
+                    $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                    $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
+
+                    // Try to send antrean using rujukan/fallback logic in sendAddAntreanByNoRawat
+                    $antreanResult = $this->sendAddAntreanByNoRawat($noRawat);
+
+                    Log::info('Antrean creation attempt result', ['result' => $antreanResult]);
+
+                    // If antrean was created or a duplicate/acceptable response, retry update
+                    $accepted = isset($antreanResult['status']) && $antreanResult['status'] === true;
+                    $metaMsgAntrean = $antreanResult['bpjs']['metadata']['message'] ?? $antreanResult['message'] ?? null;
+                    if ($accepted || (is_string($metaMsgAntrean) && (strpos($metaMsgAntrean, 'Ok') !== false || strpos($metaMsgAntrean, 'Terdapat duplikasi') !== false))) {
+                        Log::info('Antrean created/acceptable, retrying updateTaskId', ['kodebooking' => $kodebooking, 'taskid' => $taskid]);
+                        return $this->updateTaskId($kodebooking, $taskid, $waktu, $retryCount + 1, $metaMessage);
+                    }
+                } catch (Throwable $e) {
+                    Log::error('Failed to recreate antrean after kode booking not found', ['error' => $e->getMessage()]);
                 }
             }
 
@@ -740,7 +1013,7 @@ class MobileJknService
                         $taskRecord = ReferensiMobilejknBpjsTaskid::firstOrNew([
                             'no_rawat' => $referensi ? $referensi->no_rawat : $kodebooking,
                             'taskid' => (string) $taskid,
-                            'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->toDateTimeString()
+                            'waktu' =>  Carbon::createFromTimestampMs((int)$waktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                         ]);
 
                         $taskRecord->save();
@@ -893,7 +1166,8 @@ class MobileJknService
      */
     protected function getUtcTimestamp(): string
     {
-        return strval(time()-strtotime('1970-01-01 00:00:00')); // Convert to milliseconds
+        // Return current Unix timestamp in seconds as string (used for X-timestamp header)
+        return strval(time());
     }
     
     /**
@@ -961,6 +1235,74 @@ class MobileJknService
      * @param int $taskid
      * @return array|null
      */
+    public function getListTask(string $kodebooking): array
+    {
+        try {
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            $requestData = [
+                'kodebooking' => $kodebooking
+            ];
+
+            Log::info('Mobile JKN Get List Task Request', [
+                'kodebooking' => $kodebooking,
+                'timestamp' => (int) $timestamp
+            ]);
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'X-cons-id' => $this->consId,
+                'X-timestamp' => $timestamp,
+                'X-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->post($this->baseUrl . '/antrean/getlisttask', $requestData);
+
+            $responseData = $response->json();
+
+            // Log to BPJS log database
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode($requestData),
+                json_encode($responseData),
+                $this->baseUrl . '/antrean/getlisttask',
+                'POST'
+            );
+
+            Log::info('Mobile JKN Get List Task Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            $data = [];
+            if ($response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200 && isset($responseData['response'])) {
+                $key = $this->generateDecryptionKey((string) $timestamp);
+                $decrypted = $this->stringDecrypt($key, $responseData['response']);
+                $decompressed = $this->decompress($decrypted);
+                $data = json_decode($decompressed, true) ?? [];
+            }
+
+            return [
+                'success' => $response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200,
+                'data' => $data,
+                'metadata' => $responseData['metadata'] ?? [],
+                'status_code' => $response->status()
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Error getting list task from Mobile JKN', [
+                'kodebooking' => $kodebooking,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'status_code' => 500
+            ];
+        }
+    }
+
     public function getTaskIdRecord(string $noRawat, int $taskid = null): ?array
     {
         try {
@@ -1072,8 +1414,11 @@ class MobileJknService
             $angkaAntrean = str_pad((string) intval($reg->no_reg), 3, '0', STR_PAD_LEFT);
             $nomorAntrean = ($kodepoli ? $kodepoli : $reg->kd_poli) . '-' . $angkaAntrean;
 
+            // Use getKodeBooking to determine the proper booking code
+            $kodeBooking = $this->getKodeBooking($reg->no_rawat);
+
             $payload = [
-                'kodebooking' => $reg->no_rawat,
+                'kodebooking' => $kodeBooking,
                 'jenispasien' => 'JKN',
                 'nomorkartu' => $pasien->no_peserta ?? '',
                 'nik' => $pasien->no_ktp ?? '',
@@ -1098,7 +1443,6 @@ class MobileJknService
                 'keterangan' => 'Peserta harap 30 menit lebih awal guna pencatatan administrasi.'
             ];
 
-            date_default_timezone_set('UTC');
             // Make the actual BPJS API call
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
@@ -1164,7 +1508,6 @@ class MobileJknService
                     }
 
                     // regenerate headers/signature for each retry
-                    date_default_timezone_set('UTC');
                     $timestamp = $this->getUtcTimestamp();
                     $signature = base64_encode($this->generateSignature($timestamp));
 
@@ -1244,7 +1587,6 @@ class MobileJknService
         $noRujukan = '';
 
         try {
-            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
@@ -1348,7 +1690,6 @@ class MobileJknService
         $noRujukan = '';
 
         try {
-            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
@@ -1456,7 +1797,6 @@ class MobileJknService
             $bulan = $bulan ?: $now->format('m');
             $tahun = $tahun ?: $now->format('Y');
 
-            date_default_timezone_set('UTC');
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 

@@ -36,21 +36,18 @@ class ResepObat extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string,string>
      */
-    protected function casts(): array
-    {
-        return [
-            'tgl_perawatan' => 'date',
-            'jam' => 'datetime:H:i:s',
-            'tgl_peresepan' => 'date',
-            'jam_peresepan' => 'datetime:H:i:s',
-            'tgl_penyerahan' => 'date',
-            'jam_penyerahan' => 'datetime:H:i:s',
-        ];
-    }
+    protected $casts = [
+        'tgl_perawatan' => 'date',
+        'jam' => 'datetime:H:i:s',
+        'tgl_peresepan' => 'date',
+        'jam_peresepan' => 'datetime:H:i:s',
+        'tgl_penyerahan' => 'date',
+        'jam_penyerahan' => 'datetime:H:i:s',
+    ];
 
     /**
      * Get the reg_periksa that owns the ResepObat.

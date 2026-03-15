@@ -109,6 +109,10 @@ class RunBpjsTaskIdCommand implements ShouldQueue
             if (!empty($this->options['dry-run'])) {
                 $commandOptions['--dry-run'] = true;
             }
+            
+            if (!empty($this->options['mjkn'])) {
+                $commandOptions['--mjkn'] = true;
+            }
 
             // Run the command with retry logic
             $maxAttempts = (int) env('BPJS_TASK_RETRY_MAX', 5);

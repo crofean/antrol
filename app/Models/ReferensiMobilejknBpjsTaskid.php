@@ -31,16 +31,13 @@ class ReferensiMobilejknBpjsTaskid extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string,string>
      */
-    protected function casts(): array
-    {
-        return [
-            'waktu' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'waktu' => 'datetime',
+    ];
 
     /**
      * Get the reg_periksa that owns the ReferensiMobilejknBpjsTaskid.
