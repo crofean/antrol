@@ -17,6 +17,8 @@ class ReferensiMobilejknBpjsBatal extends Model
 
     protected $keyType = 'string';
 
+    public $timestamps = false;
+
     /**
      * The attributes that are mass assignable.
      *

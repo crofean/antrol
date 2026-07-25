@@ -722,7 +722,7 @@ class MobileJknService
             // batalAntrean is called explicitly by controller or command, no need to duplicate here
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'X-cons-id' => $this->consId,
                 'X-timestamp' => $timestamp,
@@ -2157,7 +2157,7 @@ class MobileJknService
             ]);
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'x-cons-id' => $this->consId,
                 'x-timestamp' => $timestamp,
@@ -2209,7 +2209,7 @@ class MobileJknService
                     ]
                 );
 
-                \App\Models\BpjsPatientVisit::where('kodebooking', $kodeBooking)->update([
+                BpjsPatientVisit::where('kodebooking', $kodeBooking)->update([
                     'status' => 'Batal',
                     'last_sync' => now()
                 ]);

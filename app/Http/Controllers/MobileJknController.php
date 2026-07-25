@@ -165,6 +165,98 @@ class MobileJknController extends Controller
     }
 
     /**
+     * Manual reconciliation endpoint for pending/failed cancellation tasks.
+     *
+     * @return JsonResponse
+     */
+    public function reconcileCancellations(): JsonResponse
+    {
+        $stats = [
+            'task_cancelled' => 0,
+            'task_failed' => 0,
+            'processed' => 0,
+        ];
+
+        try {
+            $dateFrom = now()->subDays(7)->format('Y-m-d');
+            $dateTo = now()->format('Y-m-d');
+
+            // 1. Reconcile entries from referensi_mobilejkn_bpjs_batal that failed (statuskirim = 'Belum')
+            $batalList = \App\Models\ReferensiMobilejknBpjsBatal::where('statuskirim', 'Belum')
+                ->whereBetween('tanggalbatal', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
+                ->get();
+
+            foreach ($batalList as $bRec) {
+                $stats['processed']++;
+                $kodebooking = $bRec->nobooking;
+                $nowStr = (string)(now()->timestamp * 1000);
+
+                // Send Task 99
+                $result = $this->mobileJknService->updateTaskId($kodebooking, 99, $nowStr);
+                // Send Batal Antrean
+                $this->mobileJknService->batalAntrean($kodebooking, $bRec->keterangan ?: 'Dibatalkan Oleh Admin');
+
+                $success = $result['success'] || (
+                    isset($result['data']['metadata']['message']) &&
+                    strpos($result['data']['metadata']['message'], 'Ok') !== false
+                );
+
+                if ($success) {
+                    $bRec->update(['statuskirim' => 'Sudah']);
+                    \App\Models\ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->update([
+                        'status' => 'Batal',
+                        'statuskirim' => 'Sudah'
+                    ]);
+                    $stats['task_cancelled']++;
+                } else {
+                    $stats['task_failed']++;
+                }
+            }
+
+            // 2. Reconcile entries from referensi_mobilejkn_bpjs with status = Batal but statuskirim = 'Belum'
+            $refBatalList = \App\Models\ReferensiMobilejknBpjs::where('status', 'Batal')
+                ->where('statuskirim', 'Belum')
+                ->whereBetween('tanggalperiksa', [$dateFrom, $dateTo])
+                ->get();
+
+            foreach ($refBatalList as $rRef) {
+                $stats['processed']++;
+                $kodebooking = $rRef->nobooking;
+                $nowStr = (string)(now()->timestamp * 1000);
+
+                // Send Task 99
+                $result = $this->mobileJknService->updateTaskId($kodebooking, 99, $nowStr);
+                // Send Batal Antrean
+                $this->mobileJknService->batalAntrean($kodebooking, 'Dibatalkan Oleh Admin');
+
+                $success = $result['success'] || (
+                    isset($result['data']['metadata']['message']) &&
+                    strpos($result['data']['metadata']['message'], 'Ok') !== false
+                );
+
+                if ($success) {
+                    $rRef->update(['statuskirim' => 'Sudah']);
+                    $stats['task_cancelled']++;
+                } else {
+                    $stats['task_failed']++;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Manual reconciliation of cancellations completed.',
+                'stats' => $stats
+            ]);
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Reconciliation failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Display task ID logs view
      *
      * @return View
