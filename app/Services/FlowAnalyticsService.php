@@ -395,7 +395,15 @@ class FlowAnalyticsService
                 }
             }
 
+            // Determine source: JKN or Onsite
+            $hasBooking = $visit->regPeriksa && $visit->regPeriksa->referensiMobilejknBpjs;
+            if (!$hasBooking && strpos($visit->kodebooking, '/') === false) {
+                $hasBooking = $visit->regPeriksa && $visit->regPeriksa->referensiMobilejknBpjsAll && $visit->regPeriksa->referensiMobilejknBpjsAll->isNotEmpty();
+            }
+            $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
+
             $patientFlows[] = [
+                'sumber'          => $sumber,
                 'no_rawat'        => $visit->no_rawat,
                 'no_rkm_medis'    => $visit->norm ?? $visit->regPeriksa?->no_rkm_medis,
                 'nm_pasien'       => $visit->regPeriksa?->pasien?->nm_pasien ?? 'N/A',
@@ -706,6 +714,7 @@ class FlowAnalyticsService
             5 => null,
             6 => null,
             7 => null,
+            99 => null,
         ];
 
         // Task 1 & 2: Registration
@@ -728,20 +737,7 @@ class FlowAnalyticsService
             $timestamps[3] = $timestamps[1];
         }
 
-        // 1. Check referensiMobilejknBpjsTaskid table
-        if ($reg->referensiMobilejknBpjsTaskid && $reg->referensiMobilejknBpjsTaskid->isNotEmpty()) {
-            foreach ($reg->referensiMobilejknBpjsTaskid as $taskIdRecord) {
-                $tid = (int) $taskIdRecord->taskid;
-                if (array_key_exists($tid, $timestamps) && $taskIdRecord->waktu) {
-                    $waktuStr = (string) $taskIdRecord->waktu;
-                    if ($waktuStr !== '0000-00-00 00:00:00' && $waktuStr !== '') {
-                        $timestamps[$tid] = Carbon::parse($waktuStr);
-                    }
-                }
-            }
-        }
-
-        // 2. Query SIMRS DB tables directly if missing in taskid table (without any fallbacks)
+        // 2. Query SIMRS DB tables directly (without any cache overrides)
         // Task 4: PemeriksaanRalan (petugas, asc)
         if (!$timestamps[4] && $reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
             $pemeriksaanPetugas = $reg->pemeriksaanRalan
@@ -776,26 +772,52 @@ class FlowAnalyticsService
             }
         }
 
-        // Task 6: ResepObat (jam, desc)
-        if (!$timestamps[6] && $reg->resepObat && $reg->resepObat->isNotEmpty()) {
-            $resep6 = $reg->resepObat
-                ->filter(fn($r) => !empty($r->jam) && (string)$r->jam !== '00:00:00')
-                ->sortByDesc('jam')
+        // Look for a complete prescription first (has both valid jam and valid jam_penyerahan) to avoid mismatched timestamps on duplicate/incomplete prescription records
+        $completeResep = null;
+        if ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
+            $completeResep = $reg->resepObat
+                ->filter(fn($r) => 
+                    !empty($r->jam) && (string)$r->jam !== '00:00:00' && 
+                    !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00'
+                )
+                ->sortByDesc('jam_penyerahan')
                 ->first();
-            if ($resep6 && $resep6->jam) {
-                $timestamps[6] = $this->parseTimestamp($resep6->tgl_perawatan, $resep6->jam);
+        }
+
+        // Task 6: ResepObat (jam, desc)
+        if (!$timestamps[6]) {
+            if ($completeResep) {
+                $timestamps[6] = $this->parseTimestamp($completeResep->tgl_perawatan, $completeResep->jam);
+            } elseif ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
+                $resep6 = $reg->resepObat
+                    ->filter(fn($r) => !empty($r->jam) && (string)$r->jam !== '00:00:00')
+                    ->sortByDesc('jam')
+                    ->first();
+                if ($resep6 && $resep6->jam) {
+                    $timestamps[6] = $this->parseTimestamp($resep6->tgl_perawatan, $resep6->jam);
+                }
             }
         }
 
         // Task 7: ResepObat (jam_penyerahan, desc)
-        if (!$timestamps[7] && $reg->resepObat && $reg->resepObat->isNotEmpty()) {
-            $resep7 = $reg->resepObat
-                ->filter(fn($r) => !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00')
-                ->sortByDesc('jam_penyerahan')
-                ->first();
-            if ($resep7 && $resep7->jam_penyerahan) {
-                $timestamps[7] = $this->parseTimestamp($resep7->tgl_penyerahan ?: $resep7->tgl_perawatan, $resep7->jam_penyerahan);
+        if (!$timestamps[7]) {
+            if ($completeResep) {
+                $timestamps[7] = $this->parseTimestamp($completeResep->tgl_penyerahan ?: $completeResep->tgl_perawatan, $completeResep->jam_penyerahan);
+            } elseif ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
+                $resep7 = $reg->resepObat
+                    ->filter(fn($r) => !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00')
+                    ->sortByDesc('jam_penyerahan')
+                    ->first();
+                if ($resep7 && $resep7->jam_penyerahan) {
+                    $timestamps[7] = $this->parseTimestamp($resep7->tgl_penyerahan ?: $resep7->tgl_perawatan, $resep7->jam_penyerahan);
+                }
             }
+        }
+
+        // Task 99: Pembatalan Antrean
+        $batal = \App\Models\ReferensiMobilejknBpjsBatal::where('no_rawat_batal', $reg->no_rawat)->first();
+        if ($batal && $batal->tanggalbatal) {
+            $timestamps[99] = Carbon::parse($batal->tanggalbatal);
         }
 
         return $timestamps;

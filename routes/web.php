@@ -21,6 +21,7 @@ Route::prefix('api/mobilejkn')->group(function () {
     Route::post('/update-task-id-now', [MobileJknController::class, 'updateTaskIdNow']);
     Route::post('/batch-update-task-ids', [MobileJknController::class, 'batchUpdateTaskIds']);
     Route::post('/batal-antrean', [MobileJknController::class, 'batalAntrean']);
+    Route::post('/reconcile-cancellations', [MobileJknController::class, 'reconcileCancellations']);
     Route::get('/task-id-logs', [MobileJknController::class, 'getTaskIdLogs']);
     Route::get('/filtered-task-id-logs', [MobileJknController::class, 'getFilteredTaskIdLogs']);
     Route::get('/get-patient-data/{reg_no}', [MobileJknController::class, 'getPatientData']);

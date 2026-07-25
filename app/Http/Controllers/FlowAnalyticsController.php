@@ -139,6 +139,11 @@ class FlowAnalyticsController extends Controller
 
             // Sync/fetch from BPJS automatically to populate/update the cache in DB
             $kodebooking = $reg?->referensiMobilejknBpjs?->nobooking ?? $bpjsVisit?->kodebooking ?? $noRawat;
+
+            $batalInfo = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)
+                ->orWhere('no_rawat_batal', $reg?->no_rawat ?? $noRawat)
+                ->first();
+
             if ($kodebooking && (!$bpjsVisit || !$bpjsVisit->last_sync || $bpjsVisit->last_sync->lt(now()->subMinutes(15)))) {
                 $this->mobileJknService->getListTask($kodebooking);
                 // Reload visit after sync
@@ -216,9 +221,16 @@ class FlowAnalyticsController extends Controller
                 $docName = $bpjsVisit?->namadokter ?? 'N/A';
             }
 
+            $hasBooking = $reg && $reg->referensiMobilejknBpjs;
+            if (!$hasBooking && strpos($kodebooking, '/') === false) {
+                $hasBooking = $reg && $reg->referensiMobilejknBpjsAll && $reg->referensiMobilejknBpjsAll->isNotEmpty();
+            }
+            $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
+
             return response()->json([
                 'success' => true,
                 'data'    => [
+                    'sumber'         => $sumber,
                     'no_rawat'       => $reg?->no_rawat ?? $bpjsVisit?->no_rawat,
                     'no_rkm_medis'   => $reg?->no_rkm_medis ?? $bpjsVisit?->norm,
                     'nm_pasien'      => $reg?->pasien->nm_pasien ?? 'N/A',
@@ -241,6 +253,10 @@ class FlowAnalyticsController extends Controller
                     'anomaly_hints'  => $anomalyHints,
                     'comparison'     => $comparison,
                     'is_bpjs_source' => (bool) $bpjsVisit,
+                    'batal_info'     => $batalInfo ? [
+                        'tanggal_batal' => $batalInfo->tanggalbatal ? Carbon::parse($batalInfo->tanggalbatal)->format('d M Y H:i:s') : null,
+                        'keterangan'    => $batalInfo->keterangan ?? 'Dibatalkan',
+                    ] : null,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -372,7 +388,50 @@ class FlowAnalyticsController extends Controller
                 ?? $reg?->no_rawat
                 ?? $noRawat;
 
-            $bpjsData = $this->mobileJknService->getListTask($kodebooking);
+            // Fetch directly from BPJS (bypassing cache)
+            $bpjsData = $this->mobileJknService->getListTaskDirect($kodebooking);
+
+            if ($bpjsData['success'] && !empty($bpjsData['data'])) {
+                $updateData = [
+                    'task_data' => $bpjsData['data'],
+                    'last_sync' => now()
+                ];
+
+                if ($reg) {
+                    $updateData['no_rawat'] = $reg->no_rawat;
+                    $updateData['tanggalperiksa'] = $reg->tgl_registrasi;
+                    
+                    if ($reg->referensiMobilejknBpjs) {
+                        $ref = $reg->referensiMobilejknBpjs;
+                        $updateData = array_merge($updateData, [
+                            'nomorkartu'       => $ref->nomorkartu,
+                            'nik'              => $ref->nik,
+                            'nohp'             => $ref->nohp,
+                            'norm'             => $ref->norm,
+                            'kodepoli'         => $ref->kodepoli,
+                            'namapoli'         => $reg->poliklinik->nm_poli ?? '',
+                            'kodedokter'       => $ref->kodedokter,
+                            'namadokter'       => $reg->dokter->nm_dokter ?? '',
+                            'jampraktek'       => $ref->jampraktek,
+                            'jeniskunjungan'   => (int) filter_var($ref->jeniskunjungan, FILTER_SANITIZE_NUMBER_INT) ?: null,
+                            'nomorreferensi'   => $ref->nomorreferensi,
+                            'nomorantrean'     => $ref->nomorantrean,
+                            'angkaantrean'     => (int) filter_var($ref->angkaantrean, FILTER_SANITIZE_NUMBER_INT) ?: 0,
+                            'estimasidilayani' => $ref->estimasidilayani,
+                            'sisakuotajkn'     => $ref->sisakuotajkn,
+                            'kuotajkn'         => $ref->kuotajkn,
+                            'sisakuotanonjkn'  => $ref->sisakuotanonjkn,
+                            'kuotanonjkn'      => $ref->kuotanonjkn,
+                            'status'           => $ref->status,
+                        ]);
+                    }
+                }
+
+                \App\Models\BpjsPatientVisit::updateOrCreate(
+                    ['kodebooking' => $kodebooking],
+                    $updateData
+                );
+            }
 
             return response()->json([
                 'success' => $bpjsData['success'],

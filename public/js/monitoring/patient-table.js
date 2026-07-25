@@ -26,12 +26,14 @@ function setupFilters() {
         rows.forEach(row => {
             const name = row.getAttribute('data-name');
             const rm = row.getAttribute('data-rm');
+            const rawat = (row.getAttribute('data-rawat') || '').toLowerCase();
+            const booking = (row.getAttribute('data-kodebooking') || '').toLowerCase();
             const clinic = row.getAttribute('data-clinic');
             const status = row.getAttribute('data-status');
             const hasAnomali = row.getAttribute('data-has-anomali') === 'true';
             const anomalies = (row.getAttribute('data-anomalies') || '').split(',').filter(Boolean);
 
-            let matchesSearch = !query || name.includes(query) || rm.includes(query);
+            let matchesSearch = !query || name.includes(query) || rm.includes(query) || rawat.includes(query) || booking.includes(query);
             let matchesClinic = !selectedClinic || clinic === selectedClinic;
 
             let matchesStatus = true;

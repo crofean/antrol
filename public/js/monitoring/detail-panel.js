@@ -146,11 +146,17 @@ function renderDetailContent(patient) {
         4: { name: 'Mulai Layanan Perawat', icon: 'fa-user-nurse', color: 'indigo' },
         5: { name: 'Selesai Layanan Dokter', icon: 'fa-user-md', color: 'emerald' },
         6: { name: 'Mulai Layanan Farmasi', icon: 'fa-prescription-bottle', color: 'purple' },
-        7: { name: 'Selesai Penyerahan Obat', icon: 'fa-capsules', color: 'slate' }
+        7: { name: 'Selesai Penyerahan Obat', icon: 'fa-capsules', color: 'slate' },
+        99: { name: 'Pembatalan Antrean', icon: 'fa-ban', color: 'rose' }
     };
 
     let timelineHTML = '';
-    for (let i = 3; i <= 7; i++) {
+    let timelineTasks = [3, 4, 5, 6, 7];
+    if ((patient.timestamps_real && patient.timestamps_real[99]) || (patient.timestamps_sent && patient.timestamps_sent[99])) {
+        timelineTasks.push(99);
+    }
+
+    timelineTasks.forEach(i => {
         const realT = (patient.timestamps_real || {})[i];
         const sentT = (patient.timestamps_sent || {})[i];
         const task = taskDetails[i];
@@ -161,6 +167,11 @@ function renderDetailContent(patient) {
         let statusHTML = '';
         let lineActive = parsedSent ? 'border-blue-500 dark:border-blue-600' : 'border-slate-200 dark:border-slate-800';
         let circleColor = parsedSent ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600';
+
+        if (i === 99) {
+            lineActive = parsedSent ? 'border-rose-500 dark:border-rose-600' : 'border-slate-200 dark:border-slate-800';
+            circleColor = parsedSent ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600';
+        }
 
         if (parsedReal && parsedSent) {
             const diffSec = Math.abs(parsedReal - parsedSent) / 1000;
@@ -205,7 +216,7 @@ function renderDetailContent(patient) {
                 </div>
             </div>
         `;
-    }
+    });
 
     // Render Panel Body
     content.innerHTML = `
@@ -217,7 +228,10 @@ function renderDetailContent(patient) {
                         <span class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest">Nama Lengkap Pasien</span>
                         <h4 class="text-lg font-bold text-slate-900 dark:text-white mt-0.5 leading-snug">${patient.nm_pasien || '—'}</h4>
                     </div>
-                    <span class="shrink-0 px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase ${patient.stts === 'Batal' ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'}">${patient.stts || 'Aktif'}</span>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase ${patient.sumber === 'Mobile JKN' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'}">${patient.sumber || 'Onsite'}</span>
+                        <span class="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase ${patient.stts === 'Batal' ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'}">${patient.stts || 'Aktif'}</span>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-slate-200/40 dark:border-slate-800/40">
@@ -228,6 +242,10 @@ function renderDetailContent(patient) {
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">No. Registrasi / Rawat</span>
                         <p class="text-xs font-bold text-slate-700 dark:text-slate-300 mt-0.5 truncate" title="${patient.no_rawat || ''}">${patient.no_rawat || '—'}</p>
+                    </div>
+                    <div>
+                        <span class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Kode Booking</span>
+                        <p class="text-xs font-bold text-blue-700 dark:text-blue-400 mt-0.5 font-mono select-all truncate" title="${patient.kode_booking || ''}">${patient.kode_booking || '—'}</p>
                     </div>
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">NIK / No. KTP</span>
@@ -255,6 +273,24 @@ function renderDetailContent(patient) {
                     </div>
                 </div>
             </div>
+
+            ${patient.batal_info ? `
+            <!-- Cancellation Card -->
+            <div class="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-5 animate-in fade-in duration-300">
+                <h5 class="text-xs font-extrabold text-rose-600 dark:text-rose-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <i class="fas fa-ban"></i> Detail Pembatalan Antrean
+                </h5>
+                <div class="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-rose-500/10">
+                    <div>
+                        <span class="text-[9px] uppercase font-bold text-slate-400">Tanggal Batal</span>
+                        <p class="text-xs font-bold text-rose-700 dark:text-rose-400 mt-0.5">${patient.batal_info.tanggal_batal || '—'}</p>
+                    </div>
+                    <div>
+                        <span class="text-[9px] uppercase font-bold text-slate-400">Keterangan / Alasan</span>
+                        <p class="text-xs font-bold text-rose-700 dark:text-rose-400 mt-0.5">${patient.batal_info.keterangan || '—'}</p>
+                    </div>
+                </div>
+            </div>` : ''}
 
             <!-- Durations Summary -->
             <div class="space-y-2">
