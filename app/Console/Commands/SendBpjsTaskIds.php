@@ -7,6 +7,7 @@ use App\Models\MapingDokterDpjpvclaim;
 use App\Models\MapingPoliBpjs;
 use App\Models\ReferensiMobilejknBpjs;
 use App\Models\ReferensiMobilejknBpjsBatal;
+use App\Models\ReferensiMobilejknBpjsTaskid;
 use App\Models\RegPeriksa;
 use App\Services\MobileJknService;
 use Carbon\Carbon;
@@ -64,6 +65,7 @@ class SendBpjsTaskIds extends Command
         // Build query for patients
         $query = RegPeriksa::with([
             'referensiMobilejknBpjs',
+            'referensiMobilejknBpjsAll',
             'poliklinik',
             'dokter',
             'pasien',
@@ -217,7 +219,7 @@ class SendBpjsTaskIds extends Command
     /**
      * Send Task 99 (Cancel) and update local DB tables
      */
-    protected function sendCancelTask($patient, $kodebooking, &$stats)
+    protected function sendCancelTask($patient, $kodebooking, &$stats, $referensi = null)
     {
         if ($this->option('dry-run')) {
             $this->line("DRY RUN: Task 99 (BATAL) for: {$kodebooking} — Pasien belum checkin");
@@ -238,11 +240,12 @@ class SendBpjsTaskIds extends Command
             strpos($result['data']['metadata']['message'], 'Ok') !== false
         );
 
+        $ref = $referensi ?: $patient->referensiMobilejknBpjs;
+
         if ($success) {
             $stats['task_cancelled']++;
             $this->line("Task 99 (BATAL) sent successfully for: {$kodebooking}");
 
-            $ref = $patient->referensiMobilejknBpjs;
             if ($ref) {
                 $ref->update([
                     'status' => 'Batal',
@@ -267,6 +270,26 @@ class SendBpjsTaskIds extends Command
             $stats['task_failed']++;
             $errorMsg = $result['error'] ?? ($result['data']['metadata']['message'] ?? 'Unknown error');
             $this->line("Failed to send Task 99 for: {$kodebooking} - {$errorMsg}");
+
+            if ($ref) {
+                $ref->update([
+                    'status' => 'Batal',
+                    'statuskirim' => 'Belum',
+                ]);
+            }
+
+            // Insert into referensi_mobilejkn_bpjs_batal with statuskirim = 'Belum' for retry
+            ReferensiMobilejknBpjsBatal::updateOrCreate(
+                ['nobooking' => $kodebooking],
+                [
+                    'no_rkm_medis' => $patient->no_rkm_medis,
+                    'no_rawat_batal' => $patient->no_rawat,
+                    'nomorreferensi' => $ref->nomorreferensi ?? '',
+                    'tanggalbatal' => now(),
+                    'keterangan' => 'Dibatalkan Oleh Admin',
+                    'statuskirim' => 'Belum',
+                ]
+            );
         }
     }
 
@@ -278,12 +301,12 @@ class SendBpjsTaskIds extends Command
         $stats['processed']++;
 
         $referensi = $patient->referensiMobilejknBpjs;
+        if (!$referensi && $patient->referensiMobilejknBpjsAll && $patient->referensiMobilejknBpjsAll->isNotEmpty()) {
+            $referensi = $patient->referensiMobilejknBpjsAll->sortByDesc('validasi')->first();
+        }
+
         if (!$referensi) {
             $this->line("No referensi data for patient: {$patient->no_rawat}");
-            if (strtolower(trim($patient->stts ?? '')) === 'batal') {
-                $this->line("Skipping Onsite patient {$patient->no_rawat} because status in SIMRS is Batal");
-                return;
-            }
         }
 
         // Use nobooking if referensi exists, otherwise use no_rawat
@@ -295,9 +318,38 @@ class SendBpjsTaskIds extends Command
         // Add antrean first
         $this->line("Processing patient: {$patient->no_rawat} (Booking: {$kodebooking})");
 
-        // CHECK BEFORE SENDING TASK 3-7: Auto-cancel if patient hasn't checked in
+        $simrsStatus = strtolower(trim($patient->stts ?? ''));
+        $isBatalInSimrs = $simrsStatus === 'batal' || $simrsStatus === 'belum';
+        $isBatalInRef = $referensi && strtolower(trim($referensi->status ?? '')) === 'batal';
+
+        // Check if patient hasn't checked in (validasi is empty or default '0000')
+        $hasNoValidCheckin = !$referensi || empty($referensi->validasi) || 
+            (string)$referensi->validasi === '0000-00-00 00:00:00' || 
+            strpos((string)$referensi->validasi, '0000-') !== false;
+
+        // Check if patient hasn't been examined (no raw ralan pemeriksaan)
+        $hasNoExamination = !$patient->pemeriksaanRalan || $patient->pemeriksaanRalan->isEmpty();
+
+        $isCancelled = $isBatalInSimrs || $isBatalInRef || $hasNoValidCheckin || $hasNoExamination;
+
+        // CHECK 1: If patient is marked as Batal/Belum, or has not checked in/examined, send cancellation Task 99 to BPJS
+        if ($isCancelled) {
+            $hasTask99 = ReferensiMobilejknBpjsTaskid::where('no_rawat', $patient->no_rawat)
+                ->where('taskid', '99')
+                ->exists();
+
+            if ($hasTask99) {
+                $this->line("Patient {$patient->no_rawat} is Batal and Task 99 already sent (skipped)");
+                return;
+            }
+
+            $this->sendCancelTask($patient, $kodebooking, $stats, $referensi);
+            return; // SKIP Task 3-7
+        }
+
+        // CHECK 2: Auto-cancel JKN if patient hasn't checked in by the end of day
         if ($this->shouldAutoCancel($patient)) {
-            $this->sendCancelTask($patient, $kodebooking, $stats);
+            $this->sendCancelTask($patient, $kodebooking, $stats, $referensi);
             return; // SKIP Task 3-7
         }
 
@@ -349,6 +401,13 @@ class SendBpjsTaskIds extends Command
             // Skip if already sent and not forcing --all
             if (!$this->option('all') && in_array($taskId, $existingTaskIds)) {
                 $this->line("Task ID {$taskId} already sent for: {$kodebooking} (skipped)");
+                continue;
+            }
+
+            // Skip if the resolved timestamp is invalid, empty, or default '0000'
+            $resolvedWaktu = app(MobileJknService::class)->getTaskTimestampFromDatabase($kodebooking, $taskId);
+            if ($resolvedWaktu === null || (int)$resolvedWaktu < 1609459200000) {
+                $this->warn("Skipping Task ID {$taskId} for: {$kodebooking} because resolved timestamp is invalid or default '0000'");
                 continue;
             }
 
