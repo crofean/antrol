@@ -7,6 +7,12 @@ use App\Services\MobileJknService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use App\Http\Requests\SyncRangeRequest;
+use App\Http\Requests\SyncPatientRequest;
+use App\Http\Requests\SyncBatchRequest;
+use App\Http\Resources\PatientDetailResource;
+use App\Http\Resources\SyncResultResource;
+use App\Http\Resources\ApiSuccessResource;
 
 class FlowAnalyticsController extends Controller
 {
@@ -83,7 +89,7 @@ class FlowAnalyticsController extends Controller
     /**
      * Get flow analytics data via AJAX
      */
-    public function getAnalyticsData(Request $request): JsonResponse
+    public function getAnalyticsData(Request $request): ApiSuccessResource
     {
         $dateFrom = $request->get('date_from', Carbon::today()->format('Y-m-d'));
         $dateTo = $request->get('date_to', $dateFrom);
@@ -102,163 +108,25 @@ class FlowAnalyticsController extends Controller
 
         $data = $this->flowAnalyticsService->getAnalyticsData($dateFrom, $dateTo);
 
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return new ApiSuccessResource($data);
     }
 
     /**
      * Get detail timeline for a specific patient
      */
-    public function getPatientDetail(string $noRawat): JsonResponse
+    public function getPatientDetail(string $noRawat): ApiSuccessResource|JsonResponse
     {
         try {
-            // First try to find BPJS cached data
-            $bpjsVisit = \App\Models\BpjsPatientVisit::where('no_rawat', $noRawat)
-                ->orWhere('kodebooking', $noRawat)
-                ->first();
+            $data = $this->flowAnalyticsService->buildPatientDetailData($noRawat, $this->mobileJknService);
 
-            $reg = \App\Models\RegPeriksa::with([
-                    'pasien',
-                    'poliklinik',
-                    'dokter',
-                    'referensiMobilejknBpjs',
-                    'referensiMobilejknBpjsTaskid',
-                    'bridgingSep',
-                ])
-                ->where('no_rawat', $bpjsVisit?->no_rawat ?? $noRawat)
-                ->first();
-
-            if (!$reg && !$bpjsVisit) {
+            if (!$data) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Data registrasi pasien tidak ditemukan'
                 ], 404);
             }
 
-            // Sync/fetch from BPJS automatically to populate/update the cache in DB
-            $kodebooking = $reg?->referensiMobilejknBpjs?->nobooking ?? $bpjsVisit?->kodebooking ?? $noRawat;
-
-            $batalInfo = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)
-                ->orWhere('no_rawat_batal', $reg?->no_rawat ?? $noRawat)
-                ->first();
-
-            if ($kodebooking && (!$bpjsVisit || !$bpjsVisit->last_sync || $bpjsVisit->last_sync->lt(now()->subMinutes(15)))) {
-                $this->mobileJknService->getListTask($kodebooking);
-                // Reload visit after sync
-                $bpjsVisit = \App\Models\BpjsPatientVisit::where('no_rawat', $noRawat)
-                    ->orWhere('kodebooking', $noRawat)
-                    ->first();
-            }
-
-            // Get timestamps
-            $realTimestamps = $reg ? $this->flowAnalyticsService->getRealTimestamps($reg) : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
-
-            if ($bpjsVisit) {
-                $bpjsTimestamps = $this->flowAnalyticsService->getBpjsTimestamps($bpjsVisit);
-            } else {
-                $bpjsTimestamps = [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
-            }
-
-            $hasBpjsData = ($bpjsVisit && $bpjsVisit->task_data !== null && count($bpjsVisit->task_data) > 0);
-
-            if ($hasBpjsData) {
-                $durations = $this->flowAnalyticsService->computeDurationsFromTaskData($bpjsVisit->task_data);
-                $status = $this->flowAnalyticsService->determineStatusFromTaskData($bpjsVisit->task_data);
-            } else {
-                $durations = [
-                    'checkin_to_nurse'   => null,
-                    'nurse_to_doctor'    => null,
-                    'doctor_to_pharmacy' => null,
-                    'pharmacy_to_done'   => null,
-                    'total_time'         => null,
-                    'waktu_tunggu_poli'    => null,
-                    'waktu_layan_poli'     => null,
-                    'waktu_tunggu_farmasi' => null,
-                    'waktu_layan_farmasi'  => null,
-                    'total_waktu_rs'       => null,
-                ];
-                $status = 'Belum Terkirim';
-            }
-            $anomalies = $this->flowAnalyticsService->detectPatientAnomalies($realTimestamps, $bpjsTimestamps, $durations);
-            $comparison = $this->flowAnalyticsService->compareBpjsAndSimrs($bpjsTimestamps, $realTimestamps);
-
-            // Anomaly explanation hints for analyst
-            $anomalyHints = [];
-            if (in_array('durasi_negatif', $anomalies)) {
-                $anomalyHints[] = 'Durasi negatif: kemungkinan data entry tidak urut, timestamp SIMRS terbalik, atau sinkronisasi jam server tidak konsisten antar modul.';
-            }
-            if (in_array('timestamp_buatan', $anomalies)) {
-                $anomalyHints[] = 'Timestamp buatan: data terkirim ke BPJS namun tidak ada record asli di SIMRS — fallback random digunakan saat pengiriman Task ID.';
-            }
-            if (in_array('belum_terkirim', $anomalies)) {
-                $anomalyHints[] = 'Belum terkirim: ada timestamp di SIMRS namun Task ID belum sampai ke server BPJS — periksa log pengiriman di menu Logs.';
-            }
-            if (in_array('farmasi_10_menit', $anomalies)) {
-                $anomalyHints[] = 'Farmasi 10 menit: waktu tunggu farmasi tepat 10.0 menit — indikasi kuat menggunakan fallback random_int(5,10) saat data resep belum tersedia.';
-            }
-            if (in_array('outlier_durasi', $anomalies)) {
-                $anomalyHints[] = 'Outlier durasi: terdapat durasi yang sangat panjang (>180 menit) — mungkin pasien menunggu lama atau ada gap data entry di SIMRS.';
-            }
-
-            // No. BPJS: prioritas dari bridging_sep.no_kartu, fallback pasien.no_peserta
-            $noKartuBpjs = null;
-            if ($reg) {
-                $noKartuBpjs = $reg->bridgingSep->no_kartu ?? $reg->pasien->no_peserta ?? null;
-            } elseif ($bpjsVisit) {
-                $noKartuBpjs = $bpjsVisit->nomorkartu;
-            }
-
-            // Resolve doctor name using SIMRS first, then MapingDokterDpjpvclaim, then BPJS namadokter
-            $docName = 'N/A';
-            if ($reg && $reg->dokter) {
-                $docName = $reg->dokter->nm_dokter;
-            } elseif ($bpjsVisit && $bpjsVisit->kodedokter) {
-                $mapping = \App\Models\MapingDokterDpjpvclaim::where('kd_dokter_bpjs', $bpjsVisit->kodedokter)->with('dokter')->first();
-                $docName = $mapping->dokter->nm_dokter ?? $bpjsVisit->namadokter ?? 'N/A';
-            } else {
-                $docName = $bpjsVisit?->namadokter ?? 'N/A';
-            }
-
-            $hasBooking = $reg && $reg->referensiMobilejknBpjs;
-            if (!$hasBooking && strpos($kodebooking, '/') === false) {
-                $hasBooking = $reg && $reg->referensiMobilejknBpjsAll && $reg->referensiMobilejknBpjsAll->isNotEmpty();
-            }
-            $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
-
-            return response()->json([
-                'success' => true,
-                'data'    => [
-                    'sumber'         => $sumber,
-                    'no_rawat'       => $reg?->no_rawat ?? $bpjsVisit?->no_rawat,
-                    'no_rkm_medis'   => $reg?->no_rkm_medis ?? $bpjsVisit?->norm,
-                    'nm_pasien'      => $reg?->pasien->nm_pasien ?? 'N/A',
-                    'no_ktp'         => $reg?->pasien->no_ktp ?? $bpjsVisit?->nik ?? null, // NIK
-                    'no_kartu_bpjs'  => $noKartuBpjs, // No. BPJS
-                    'tgl_lahir'      => $reg?->pasien?->tgl_lahir ? Carbon::parse($reg->pasien->tgl_lahir)->format('d M Y') : null,
-                    'jk'             => $reg?->pasien->jk ?? null,
-                    'nm_poli'        => $reg?->poliklinik->nm_poli ?? $bpjsVisit?->namapoli ?? 'N/A',
-                    'nm_dokter'      => $docName,
-                    'tgl_registrasi' => ($bpjsVisit && $bpjsVisit->tanggalperiksa instanceof Carbon) ? $bpjsVisit->tanggalperiksa->format('d M Y') : ($reg?->tgl_registrasi instanceof Carbon ? $reg->tgl_registrasi->format('d M Y') : (string) $reg?->tgl_registrasi),
-                    'jam_reg'        => $reg?->jam_reg ? ($reg->jam_reg instanceof \DateTimeInterface ? $reg->jam_reg->format('H:i') : substr((string) $reg->jam_reg, 0, 5)) : null,
-                    'stts'           => $reg?->stts ?? '',
-                    'has_booking'    => (bool) ($reg?->referensiMobilejknBpjs ?? $bpjsVisit),
-                    'kode_booking'   => $kodebooking,
-                    'timestamps_real' => array_map(fn($c) => $c?->toDateTimeString(), $realTimestamps),
-                    'timestamps_sent' => array_map(fn($c) => $c?->toDateTimeString(), $bpjsTimestamps),
-                    'durations'      => $durations,
-                    'status'         => $status,
-                    'anomalies'      => $anomalies,
-                    'anomaly_hints'  => $anomalyHints,
-                    'comparison'     => $comparison,
-                    'is_bpjs_source' => (bool) $bpjsVisit,
-                    'batal_info'     => $batalInfo ? [
-                        'tanggal_batal' => $batalInfo->tanggalbatal ? Carbon::parse($batalInfo->tanggalbatal)->format('d M Y H:i:s') : null,
-                        'keterangan'    => $batalInfo->keterangan ?? 'Dibatalkan',
-                    ] : null,
-                ]
-            ]);
+            return new ApiSuccessResource(new PatientDetailResource($data));
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -270,27 +138,19 @@ class FlowAnalyticsController extends Controller
     /**
      * Trigger on-demand sync for a specific date (today's registrations)
      */
-    public function syncToday(Request $request): JsonResponse
+    public function syncToday(Request $request): ApiSuccessResource
     {
         $date = $request->get('date', Carbon::today()->format('Y-m-d'));
         $result = $this->flowAnalyticsService->syncDatePatientsDirectly($date);
-        return response()->json([
-            'success' => true,
-            'message' => "Berhasil menyinkronkan data tanggal {$date}",
-            'data' => $result
-        ]);
+        
+        return new ApiSuccessResource($result, "Berhasil menyinkronkan data tanggal {$date}");
     }
 
     /**
      * Trigger background queue sync for a date range
      */
-    public function syncRange(Request $request): JsonResponse
+    public function syncRange(SyncRangeRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'date_from' => 'required|date_format:Y-m-d',
-            'date_to' => 'required|date_format:Y-m-d',
-        ]);
-
         $dateFrom = $request->date_from;
         $dateTo = $request->date_to;
 
@@ -306,17 +166,16 @@ class FlowAnalyticsController extends Controller
             'started_at' => now()->timezone('Asia/Jakarta')->toIso8601String(),
         ], 86400);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Sinkronisasi rentang tanggal dijadwalkan di latar belakang.',
-            'sync_key' => $syncKey
-        ]);
+        return (new ApiSuccessResource(
+            ['sync_key' => $syncKey],
+            'Sinkronisasi rentang tanggal dijadwalkan di latar belakang.'
+        ));
     }
 
     /**
      * Polling endpoint to check background queue range sync progress
      */
-    public function syncStatus(Request $request): JsonResponse
+    public function syncStatus(Request $request): ApiSuccessResource|JsonResponse
     {
         $dateFrom = $request->get('date_from');
         $dateTo = $request->get('date_to');
@@ -353,16 +212,13 @@ class FlowAnalyticsController extends Controller
             }
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => $status
-        ]);
+        return new ApiSuccessResource($status);
     }
 
     /**
      * Cross-verify local timestamps with BPJS servers
      */
-    public function verifyBpjs(string $noRawat): JsonResponse
+    public function verifyBpjs(string $noRawat): ApiSuccessResource|JsonResponse
     {
         try {
             $reg = \App\Models\RegPeriksa::with(['referensiMobilejknBpjs'])
@@ -433,9 +289,10 @@ class FlowAnalyticsController extends Controller
                 );
             }
 
-            return response()->json([
-                'success' => $bpjsData['success'],
-                'data' => $bpjsData['data'] ?? [],
+            return (new ApiSuccessResource(
+                $bpjsData['data'] ?? [],
+                'BPJS verification completed'
+            ))->additional([
                 'metadata' => $bpjsData['metadata'] ?? [],
                 'status_code' => $bpjsData['status_code']
             ]);
@@ -450,7 +307,7 @@ class FlowAnalyticsController extends Controller
     /**
      * Get listtask directly from BPJS by kodebooking
      */
-    public function getListTaskByKodeBooking(Request $request, ?string $kodebooking = null): JsonResponse
+    public function getListTaskByKodeBooking(Request $request, ?string $kodebooking = null): ApiSuccessResource|JsonResponse
     {
         try {
             $bookingCode = $kodebooking ?: $request->input('kodebooking');
@@ -464,13 +321,14 @@ class FlowAnalyticsController extends Controller
 
             $bpjsData = $this->mobileJknService->getListTaskDirect($bookingCode);
 
-            return response()->json([
-                'success'     => $bpjsData['success'] ?? false,
+            return (new ApiSuccessResource(
+                $bpjsData['data'] ?? [],
+                'Tasks retrieved successfully'
+            ))->additional([
                 'kodebooking' => $bookingCode,
-                'data'        => $bpjsData['data'] ?? [],
                 'metadata'    => $bpjsData['metadata'] ?? [],
                 'status_code' => $bpjsData['status_code'] ?? 500
-            ], (isset($bpjsData['success']) && $bpjsData['success']) ? 200 : ($bpjsData['status_code'] ?? 500));
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -482,7 +340,7 @@ class FlowAnalyticsController extends Controller
     /**
      * Get detailed statistics for a specific clinic
      */
-    public function getClinicDetail(string $nmPoli): JsonResponse
+    public function getClinicDetail(string $nmPoli): ApiSuccessResource|JsonResponse
     {
         try {
             $dateFrom = request()->get('date_from', Carbon::today()->format('Y-m-d'));
@@ -518,11 +376,12 @@ class FlowAnalyticsController extends Controller
                 }
             }
 
-            return response()->json([
-                'success'            => true,
+            return (new ApiSuccessResource(
+                $clinicStats,
+                'Clinic statistics retrieved'
+            ))->additional([
                 'nm_poli'            => $nmPoli,
                 'date_range'         => ['from' => $dateFrom, 'to' => $dateTo],
-                'stats'              => $clinicStats,
                 'patient_count'      => count($clinicPatients),
                 'negative_durations' => $negativeBreakdown,
             ]);
@@ -537,20 +396,20 @@ class FlowAnalyticsController extends Controller
     /**
      * Get official daily dashboard report from BPJS Kesehatan
      */
-    public function getBpjsDashboardTanggal(Request $request): JsonResponse
+    public function getBpjsDashboardTanggal(Request $request): ApiSuccessResource
     {
         $tanggal = $request->get('tanggal', Carbon::today()->format('Y-m-d'));
         $waktu = $request->get('waktu', 'rs');
 
         $result = $this->mobileJknService->getDashboardPerTanggal($tanggal, $waktu);
 
-        return response()->json($result);
+        return new ApiSuccessResource($result);
     }
 
     /**
      * Get official monthly dashboard report from BPJS Kesehatan
      */
-    public function getBpjsDashboardBulan(Request $request): JsonResponse
+    public function getBpjsDashboardBulan(Request $request): ApiSuccessResource
     {
         $bulan = $request->get('bulan', Carbon::today()->format('m'));
         $tahun = $request->get('tahun', Carbon::today()->format('Y'));
@@ -558,38 +417,27 @@ class FlowAnalyticsController extends Controller
 
         $result = $this->mobileJknService->getDashboardPerBulan($bulan, $tahun, $waktu);
 
-        return response()->json($result);
+        return new ApiSuccessResource($result);
     }
 
     /**
      * Sync a single patient from BPJS to local cache
      */
-    public function syncPatient(Request $request): JsonResponse
+    public function syncPatient(SyncPatientRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'kodebooking' => 'required|string',
-            'no_rawat' => 'required|string',
-        ]);
-
         $result = $this->flowAnalyticsService->syncSinglePatient(
             $request->kodebooking,
             $request->no_rawat
         );
 
-        return response()->json($result);
+        return new ApiSuccessResource(new SyncResultResource($result));
     }
 
     /**
      * Sync multiple patients from BPJS in one request
      */
-    public function syncBatch(Request $request): JsonResponse
+    public function syncBatch(SyncBatchRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'patients' => 'required|array|min:1',
-            'patients.*.kodebooking' => 'required|string',
-            'patients.*.no_rawat' => 'required|string',
-        ]);
-
         $results = [];
         $successCount = 0;
         $failedCount = 0;
@@ -616,12 +464,13 @@ class FlowAnalyticsController extends Controller
             }
         }
 
-        return response()->json([
-            'success' => true,
+        return (new ApiSuccessResource(
+            $results,
+            'Batch sync completed'
+        ))->additional([
             'total' => count($request->patients),
             'success_count' => $successCount,
             'failed_count' => $failedCount,
-            'results' => $results,
         ]);
     }
 }

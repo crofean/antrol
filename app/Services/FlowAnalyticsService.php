@@ -413,8 +413,8 @@ class FlowAnalyticsService
                 'tgl_registrasi'  => $visit->tanggalperiksa ? ($visit->tanggalperiksa instanceof Carbon ? $visit->tanggalperiksa->toDateString() : (string) $visit->tanggalperiksa) : '',
                 'has_booking'     => (strpos($visit->kodebooking, '/') === false),
                 'kode_booking'    => $visit->kodebooking,
-                'timestamps_real' => array_map(fn($c) => $c?->toDateTimeString(), $realTimestamps),
-                'timestamps_sent' => array_map(fn($c) => $c?->toDateTimeString(), $bpjsTimestamps),
+                'timestamps_real' => $this->formatTimestampMap($realTimestamps),
+                'timestamps_sent' => $this->formatTimestampMap($bpjsTimestamps),
                 'durations'       => $durations,
                 'status'          => $status,
                 'waktu_batal'     => $waktuBatal,
@@ -607,7 +607,7 @@ class FlowAnalyticsService
                 'success' => true,
                 'patient' => [
                     'kode_booking'    => $kodebooking,
-                    'timestamps_sent' => array_map(fn($c) => $c?->toDateTimeString(), $bpjsTimestamps),
+                    'timestamps_sent' => $this->formatTimestampMap($bpjsTimestamps),
                     'durations'       => $mappedDurations,
                     'status'          => $status,
                     'anomalies'       => $anomalies,
@@ -624,7 +624,7 @@ class FlowAnalyticsService
         }
     }
 
-    private function parseTaskWaktu($waktu): ?Carbon
+    private function parseTaskWaktu($waktu, $defaultDate = null): ?Carbon
     {
         if (! $waktu) {
             return null;
@@ -632,6 +632,17 @@ class FlowAnalyticsService
 
         if (is_string($waktu)) {
             $waktu = trim(str_replace(['WIB', 'WITA', 'WIT'], '', $waktu));
+            if (preg_match('/^\d{2}\.\d{2}\.\d{2}$/', $waktu)) {
+                $waktu = str_replace('.', ':', $waktu);
+            }
+            if (preg_match('/^(\d{4}-\d{2}-\d{2}) (\d{2})\.(\d{2})\.(\d{2})$/', $waktu, $m)) {
+                $waktu = "{$m[1]} {$m[2]}:{$m[3]}:{$m[4]}";
+            }
+            if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $waktu) && $defaultDate) {
+                $dateStr = $defaultDate instanceof Carbon ? $defaultDate->toDateString() : (string)$defaultDate;
+                $dateStr = explode(' ', $dateStr)[0];
+                $waktu = "{$dateStr} {$waktu}";
+            }
         }
 
         if (is_numeric($waktu)) {
@@ -668,10 +679,10 @@ class FlowAnalyticsService
             $taskData = json_decode($taskData, true) ?: [];
         }
         foreach ($taskData as $task) {
-            $taskId = $task['taskid'] ?? null;
-            $waktu  = $task['wakturs'] ?? null;
-            if ($taskId && $waktu && array_key_exists($taskId, $timestamps)) {
-                $timestamps[$taskId] = $this->parseTaskWaktu($waktu);
+            $taskId = (int) ($task['taskid'] ?? $task['task_id'] ?? 0);
+            $waktu  = $task['wakturs'] ?? $task['waktu'] ?? $task['waktu_sent'] ?? null;
+            if ($taskId > 0 && $waktu && array_key_exists($taskId, $timestamps)) {
+                $timestamps[$taskId] = $this->parseTaskWaktu($waktu, $visit->tanggalperiksa);
             }
         }
         return $timestamps;
@@ -680,9 +691,15 @@ class FlowAnalyticsService
     public function compareBpjsAndSimrs(array $bpjsTimestamps, array $simrsTimestamps): array
     {
         $comparison = [];
-        foreach (self::MONITOR_TASKS as $taskId) {
-            $bpjsTime    = $bpjsTimestamps[$taskId];
-            $simrsTime   = $simrsTimestamps[$taskId];
+        $tasksToMonitor = self::MONITOR_TASKS;
+        
+        if (!empty($bpjsTimestamps[99]) || !empty($simrsTimestamps[99])) {
+            $tasksToMonitor[] = 99;
+        }
+
+        foreach ($tasksToMonitor as $taskId) {
+            $bpjsTime    = $bpjsTimestamps[$taskId] ?? null;
+            $simrsTime   = $simrsTimestamps[$taskId] ?? null;
             $diffMinutes = null;
             $status      = 'missing';
 
@@ -723,9 +740,10 @@ class FlowAnalyticsService
             : null;
         $timestamps[2] = $timestamps[1];
 
-        // Task 3: Check-in / Validasi or Registration
-        if ($reg->referensiMobilejknBpjs && $reg->referensiMobilejknBpjs->validasi) {
-            $validasiStr = (string) $reg->referensiMobilejknBpjs->validasi;
+        // Task 3: Check-in / Waktu Validasi Mobile JKN (jika ada data), jika tidak ambil dari RegPeriksa (tgl_registrasi + jam_reg)
+        $refMjkn = $reg->referensiMobilejknBpjs;
+        if ($refMjkn && $refMjkn->validasi) {
+            $validasiStr = (string) $refMjkn->validasi;
             if ($validasiStr !== '0000-00-00 00:00:00' && $validasiStr !== '' && strpos($validasiStr, '-0001') === false && strpos($validasiStr, '0000-') === false) {
                 $parsedV = Carbon::parse($validasiStr);
                 if ($parsedV->year > 1970) {
@@ -737,80 +755,79 @@ class FlowAnalyticsService
             $timestamps[3] = $timestamps[1];
         }
 
-        // 2. Query SIMRS DB tables directly (without any cache overrides)
-        // Task 4: PemeriksaanRalan (petugas, asc)
-        if (!$timestamps[4] && $reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
+        // Task 4: Pemeriksaan Ralan - Cek NIP Petugas (Perawat)
+        if ($reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
+            $nipsInPemeriksaan = $reg->pemeriksaanRalan->pluck('nip')->filter()->unique()->toArray();
+            $petugasNips = !empty($nipsInPemeriksaan) ? \App\Models\Petugas::whereIn('nip', $nipsInPemeriksaan)->pluck('nip')->toArray() : [];
+
             $pemeriksaanPetugas = $reg->pemeriksaanRalan
-                ->filter(fn($p) => !empty($p->nip) && $p->petugas && (string)$p->jam_rawat !== '00:00:00')
+                ->filter(function($p) use ($petugasNips) {
+                    if (empty($p->nip) || (string)$p->jam_rawat === '00:00:00') {
+                        return false;
+                    }
+                    return $p->petugas !== null || in_array($p->nip, $petugasNips);
+                })
                 ->sortBy('jam_rawat')
                 ->first();
+
             if (!$pemeriksaanPetugas) {
                 $pemeriksaanPetugas = $reg->pemeriksaanRalan
                     ->filter(fn($p) => (string)$p->jam_rawat !== '00:00:00')
                     ->sortBy('jam_rawat')
                     ->first();
             }
+
             if ($pemeriksaanPetugas && $pemeriksaanPetugas->jam_rawat) {
                 $timestamps[4] = $this->parseTimestamp($pemeriksaanPetugas->tgl_perawatan, $pemeriksaanPetugas->jam_rawat);
             }
         }
 
-        // Task 5: PemeriksaanRalan (dokter, desc)
-        if (!$timestamps[5] && $reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
+        // Task 5: Pemeriksaan Ralan - Cek NIP Dokter
+        if ($reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
+            $nipsInPemeriksaan = $reg->pemeriksaanRalan->pluck('nip')->filter()->unique()->toArray();
+            $dokterNips = !empty($nipsInPemeriksaan) ? \App\Models\Dokter::whereIn('kd_dokter', $nipsInPemeriksaan)->pluck('kd_dokter')->toArray() : [];
+
             $pemeriksaanDokter = $reg->pemeriksaanRalan
-                ->filter(fn($p) => !empty($p->nip) && $p->dokter && (string)$p->jam_rawat !== '00:00:00')
+                ->filter(function($p) use ($dokterNips) {
+                    if (empty($p->nip) || (string)$p->jam_rawat === '00:00:00') {
+                        return false;
+                    }
+                    return $p->dokter !== null || in_array($p->nip, $dokterNips);
+                })
                 ->sortByDesc('jam_rawat')
                 ->first();
+
             if (!$pemeriksaanDokter) {
                 $pemeriksaanDokter = $reg->pemeriksaanRalan
                     ->filter(fn($p) => (string)$p->jam_rawat !== '00:00:00')
                     ->sortByDesc('jam_rawat')
                     ->first();
             }
+
             if ($pemeriksaanDokter && $pemeriksaanDokter->jam_rawat) {
                 $timestamps[5] = $this->parseTimestamp($pemeriksaanDokter->tgl_perawatan, $pemeriksaanDokter->jam_rawat);
             }
         }
 
-        // Look for a complete prescription first (has both valid jam and valid jam_penyerahan) to avoid mismatched timestamps on duplicate/incomplete prescription records
-        $completeResep = null;
+        // Task 6: Resep Obat - Jam Peresapan / Pembuatan Resep (ResepObat.jam)
         if ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
-            $completeResep = $reg->resepObat
-                ->filter(fn($r) => 
-                    !empty($r->jam) && (string)$r->jam !== '00:00:00' && 
-                    !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00'
-                )
-                ->sortByDesc('jam_penyerahan')
+            $resep6 = $reg->resepObat
+                ->filter(fn($r) => !empty($r->jam) && (string)$r->jam !== '00:00:00')
+                ->sortByDesc('jam')
                 ->first();
-        }
-
-        // Task 6: ResepObat (jam, desc)
-        if (!$timestamps[6]) {
-            if ($completeResep) {
-                $timestamps[6] = $this->parseTimestamp($completeResep->tgl_perawatan, $completeResep->jam);
-            } elseif ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
-                $resep6 = $reg->resepObat
-                    ->filter(fn($r) => !empty($r->jam) && (string)$r->jam !== '00:00:00')
-                    ->sortByDesc('jam')
-                    ->first();
-                if ($resep6 && $resep6->jam) {
-                    $timestamps[6] = $this->parseTimestamp($resep6->tgl_perawatan, $resep6->jam);
-                }
+            if ($resep6 && $resep6->jam) {
+                $timestamps[6] = $this->parseTimestamp($resep6->tgl_perawatan ?: $resep6->tgl_peresapan ?: $reg->tgl_registrasi, $resep6->jam);
             }
         }
 
-        // Task 7: ResepObat (jam_penyerahan, desc)
-        if (!$timestamps[7]) {
-            if ($completeResep) {
-                $timestamps[7] = $this->parseTimestamp($completeResep->tgl_penyerahan ?: $completeResep->tgl_perawatan, $completeResep->jam_penyerahan);
-            } elseif ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
-                $resep7 = $reg->resepObat
-                    ->filter(fn($r) => !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00')
-                    ->sortByDesc('jam_penyerahan')
-                    ->first();
-                if ($resep7 && $resep7->jam_penyerahan) {
-                    $timestamps[7] = $this->parseTimestamp($resep7->tgl_penyerahan ?: $resep7->tgl_perawatan, $resep7->jam_penyerahan);
-                }
+        // Task 7: Resep Obat - Jam Penyerahan Obat (ResepObat.jam_penyerahan)
+        if ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
+            $resep7 = $reg->resepObat
+                ->filter(fn($r) => !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00')
+                ->sortByDesc('jam_penyerahan')
+                ->first();
+            if ($resep7 && $resep7->jam_penyerahan) {
+                $timestamps[7] = $this->parseTimestamp($resep7->tgl_penyerahan ?: $resep7->tgl_perawatan ?: $reg->tgl_registrasi, $resep7->jam_penyerahan);
             }
         }
 
@@ -1181,5 +1198,153 @@ class FlowAnalyticsService
             }
         }
         return $dist;
+    }
+
+    public function buildPatientDetailData(string $noRawat, MobileJknService $mobileJknService): ?array
+    {
+        $bpjsVisit = BpjsPatientVisit::where('no_rawat', $noRawat)
+            ->orWhere('kodebooking', $noRawat)
+            ->first();
+
+        $reg = RegPeriksa::with([
+                'pasien',
+                'poliklinik',
+                'dokter',
+                'referensiMobilejknBpjs',
+                'referensiMobilejknBpjsTaskid',
+                'bridgingSep',
+                'pemeriksaanRalan.petugas',
+                'pemeriksaanRalan.dokter',
+                'resepObat',
+            ])
+            ->where('no_rawat', $bpjsVisit?->no_rawat ?? $noRawat)
+            ->first();
+
+        if (!$reg && !$bpjsVisit) {
+            return null;
+        }
+
+        $kodebooking = $reg?->referensiMobilejknBpjs?->nobooking ?? $bpjsVisit?->kodebooking ?? $noRawat;
+
+        $batalInfo = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)
+            ->orWhere('no_rawat_batal', $reg?->no_rawat ?? $noRawat)
+            ->first();
+
+        if ($kodebooking && (!$bpjsVisit || !$bpjsVisit->last_sync || $bpjsVisit->last_sync->lt(now()->subMinutes(15)))) {
+            $mobileJknService->getListTask($kodebooking);
+            $bpjsVisit = BpjsPatientVisit::where('no_rawat', $noRawat)
+                ->orWhere('kodebooking', $noRawat)
+                ->first();
+        }
+
+        $realTimestamps = $reg ? $this->getRealTimestamps($reg) : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
+
+        if ($bpjsVisit) {
+            $bpjsTimestamps = $this->getBpjsTimestamps($bpjsVisit);
+        } else {
+            $bpjsTimestamps = [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
+        }
+
+        $hasBpjsData = ($bpjsVisit && $bpjsVisit->task_data !== null && count($bpjsVisit->task_data) > 0);
+
+        if ($hasBpjsData) {
+            $durations = $this->computeDurationsFromTaskData($bpjsVisit->task_data);
+            $status = $this->determineStatusFromTaskData($bpjsVisit->task_data);
+        } else {
+            $durations = [
+                'checkin_to_nurse'   => null,
+                'nurse_to_doctor'    => null,
+                'doctor_to_pharmacy' => null,
+                'pharmacy_to_done'   => null,
+                'total_time'         => null,
+                'waktu_tunggu_poli'    => null,
+                'waktu_layan_poli'     => null,
+                'waktu_tunggu_farmasi' => null,
+                'waktu_layan_farmasi'  => null,
+                'total_waktu_rs'       => null,
+            ];
+            $status = 'Belum Terkirim';
+        }
+        $anomalies = $this->detectPatientAnomalies($realTimestamps, $bpjsTimestamps, $durations);
+        $comparison = $this->compareBpjsAndSimrs($bpjsTimestamps, $realTimestamps);
+
+        $anomalyHints = [];
+        if (in_array('durasi_negatif', $anomalies)) {
+            $anomalyHints[] = 'Durasi negatif: kemungkinan data entry tidak urut, timestamp SIMRS terbalik, atau sinkronisasi jam server tidak konsisten antar modul.';
+        }
+        if (in_array('timestamp_buatan', $anomalies)) {
+            $anomalyHints[] = 'Timestamp buatan: data terkirim ke BPJS namun tidak ada record asli di SIMRS — fallback random digunakan saat pengiriman Task ID.';
+        }
+        if (in_array('belum_terkirim', $anomalies)) {
+            $anomalyHints[] = 'Belum terkirim: ada timestamp di SIMRS namun Task ID belum sampai ke server BPJS — periksa log pengiriman di menu Logs.';
+        }
+        if (in_array('farmasi_10_menit', $anomalies)) {
+            $anomalyHints[] = 'Farmasi 10 menit: waktu tunggu farmasi tepat 10.0 menit — indikasi kuat menggunakan fallback random_int(5,10) saat data resep belum tersedia.';
+        }
+        if (in_array('outlier_durasi', $anomalies)) {
+            $anomalyHints[] = 'Outlier durasi: terdapat durasi yang sangat panjang (>180 menit) — mungkin pasien menunggu lama atau ada gap data entry di SIMRS.';
+        }
+
+        $noKartuBpjs = null;
+        if ($reg) {
+            $noKartuBpjs = $reg->bridgingSep->no_kartu ?? $reg->pasien->no_peserta ?? null;
+        } elseif ($bpjsVisit) {
+            $noKartuBpjs = $bpjsVisit->nomorkartu;
+        }
+
+        $docName = 'N/A';
+        if ($reg && $reg->dokter) {
+            $docName = $reg->dokter->nm_dokter;
+        } elseif ($bpjsVisit && $bpjsVisit->kodedokter) {
+            $mapping = MapingDokterDpjpvclaim::where('kd_dokter_bpjs', $bpjsVisit->kodedokter)->with('dokter')->first();
+            $docName = $mapping->dokter->nm_dokter ?? $bpjsVisit->namadokter ?? 'N/A';
+        } else {
+            $docName = $bpjsVisit?->namadokter ?? 'N/A';
+        }
+
+        $hasBooking = $reg && $reg->referensiMobilejknBpjs;
+        if (!$hasBooking && strpos($kodebooking, '/') === false) {
+            $hasBooking = $reg && $reg->referensiMobilejknBpjsAll && $reg->referensiMobilejknBpjsAll->isNotEmpty();
+        }
+        $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
+
+        return [
+            'sumber'         => $sumber,
+            'no_rawat'       => $reg?->no_rawat ?? $bpjsVisit?->no_rawat,
+            'no_rkm_medis'   => $reg?->no_rkm_medis ?? $bpjsVisit?->norm,
+            'nm_pasien'      => $reg?->pasien->nm_pasien ?? 'N/A',
+            'no_ktp'         => $reg?->pasien->no_ktp ?? $bpjsVisit?->nik ?? null,
+            'no_kartu_bpjs'  => $noKartuBpjs,
+            'tgl_lahir'      => $reg?->pasien?->tgl_lahir ? Carbon::parse($reg->pasien->tgl_lahir)->format('d M Y') : null,
+            'jk'             => $reg?->pasien->jk ?? null,
+            'nm_poli'        => $reg?->poliklinik->nm_poli ?? $bpjsVisit?->namapoli ?? 'N/A',
+            'nm_dokter'      => $docName,
+            'tgl_registrasi' => ($bpjsVisit && $bpjsVisit->tanggalperiksa instanceof Carbon) ? $bpjsVisit->tanggalperiksa->format('d M Y') : ($reg?->tgl_registrasi instanceof Carbon ? $reg->tgl_registrasi->format('d M Y') : (string) $reg?->tgl_registrasi),
+            'jam_reg'        => $reg?->jam_reg ? ($reg->jam_reg instanceof \DateTimeInterface ? $reg->jam_reg->format('H:i') : substr((string) $reg->jam_reg, 0, 5)) : null,
+            'stts'           => $reg?->stts ?? '',
+            'has_booking'    => (bool) ($reg?->referensiMobilejknBpjs ?? $bpjsVisit),
+            'kode_booking'   => $kodebooking,
+            'timestamps_real' => $this->formatTimestampMap($realTimestamps),
+            'timestamps_sent' => $this->formatTimestampMap($bpjsTimestamps),
+            'durations'      => $durations,
+            'status'         => $status,
+            'anomalies'      => $anomalies,
+            'anomaly_hints'  => $anomalyHints,
+            'comparison'     => $comparison,
+            'is_bpjs_source' => (bool) $bpjsVisit,
+            'batal_info'     => $batalInfo ? [
+                'tanggal_batal' => $batalInfo->tanggalbatal ? Carbon::parse($batalInfo->tanggalbatal)->format('d M Y H:i:s') : null,
+                'keterangan'    => $batalInfo->keterangan ?? 'Dibatalkan',
+            ] : null,
+        ];
+    }
+
+    public function formatTimestampMap(array $timestamps): object
+    {
+        $result = [];
+        foreach ($timestamps as $taskId => $carbon) {
+            $result['task_' . $taskId] = $carbon?->toDateTimeString();
+        }
+        return (object) $result;
     }
 }

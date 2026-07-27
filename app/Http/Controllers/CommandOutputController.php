@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Log;
 
+use App\Http\Requests\RunCommandRequest;
+
 class CommandOutputController extends Controller
 {
     /**
@@ -26,7 +28,7 @@ class CommandOutputController extends Controller
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
      */
-    public function runCommand(Request $request)
+    public function runCommand(RunCommandRequest $request)
     {
         try {
             // Log incoming request
@@ -37,23 +39,6 @@ class CommandOutputController extends Controller
                 'content_type' => $request->header('Content-Type'),
                 'all_data' => $request->all()
             ]);
-
-            // Validate input
-            try {
-                $request->validate([
-                    'date_from' => 'nullable|date',
-                    'date_to' => 'nullable|date',
-                    'dry_run' => 'nullable|boolean',
-                    'mjkn' => 'nullable|boolean',
-                    'all' => 'nullable|boolean',
-                ]);
-            } catch (\Exception $validationError) {
-                Log::warning('Validation failed', ['error' => $validationError->getMessage()]);
-                return response()->json([
-                    'status' => 'error',
-                    'error' => 'Validation failed: ' . $validationError->getMessage()
-                ], 422);
-            }
 
             // Create options array for the command
             $options = [
@@ -177,13 +162,9 @@ class CommandOutputController extends Controller
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getTaskIds(Request $request)
+    public function getTaskIds(RunCommandRequest $request)
     {
         try {
-            $request->validate([
-                'date_from' => 'nullable|date',
-                'date_to' => 'nullable|date',
-            ]);
 
             $dateFrom = $request->date_from ? \Carbon\Carbon::parse($request->date_from)->startOfDay() : now()->startOfDay();
             $dateTo = $request->date_to ? \Carbon\Carbon::parse($request->date_to)->endOfDay() : now()->endOfDay();
@@ -621,4 +602,26 @@ class CommandOutputController extends Controller
         return $response;
     }
 
+    /**
+     * Placeholder for dead routes (retained for future use)
+     */
+    public function getOutputs(Request $request)
+    {
+        return response()->json(['success' => true, 'data' => []]);
+    }
+
+    public function getOutputsByDateRange(Request $request)
+    {
+        return response()->json(['success' => true, 'data' => []]);
+    }
+
+    public function getOutputsByCode(Request $request)
+    {
+        return response()->json(['success' => true, 'data' => []]);
+    }
+
+    public function getOutputsByTask(Request $request)
+    {
+        return response()->json(['success' => true, 'data' => []]);
+    }
 }

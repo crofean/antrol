@@ -33,13 +33,4 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
-
-    'mobilejkn' => [
-        'base_url' => env('MOBILEJKN_BASE_URL', 'https://apijkn.bpjs-kesehatan.go.id/antreanrs/bpjs'),
-        'cons_id' => env('MOBILEJKN_CONS_ID'),
-        'user_key' => env('MOBILEJKN_USER_KEY'),
-        'secret_key' => env('MOBILEJKN_SECRET_KEY'),
-        'kd_pj' => env('BPJS_KD_PJ', 'BPJ'), // BPJS payer code
-        'exclude_poli' => env('BPJS_EXCLUDE_POLI', ''), // Comma-separated list of poli codes to exclude
-    ],
 ];
