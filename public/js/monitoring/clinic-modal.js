@@ -16,7 +16,7 @@ function showClinicDetail(nmPoli, dateFrom, dateTo) {
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 
-    fetch(`/api/monitoring/clinic/${encodeURIComponent(nmPoli)}?date_from=${dateFrom}&date_to=${dateTo}`)
+    fetch(`/api/v1/monitoring/clinic/${encodeURIComponent(nmPoli)}?date_from=${dateFrom}&date_to=${dateTo}`)
         .then(r => r.json())
         .then(res => {
             if (!res.success) {

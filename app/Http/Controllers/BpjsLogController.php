@@ -6,7 +6,11 @@ use App\Services\BpjsLogService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
-use App\Models\BpjsWsRsLog;
+use App\Http\Requests\DateRangeRequest;
+use App\Http\Requests\GetLogsByCodeRequest;
+use App\Http\Requests\GetLogsByTaskRequest;
+use App\Http\Resources\BpjsLogResource;
+use App\Http\Resources\ApiSuccessResource;
 
 class BpjsLogController extends Controller
 {
@@ -35,77 +39,54 @@ class BpjsLogController extends Controller
      * Get BPJS logs as JSON
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return ApiSuccessResource
      */
-    public function getLogs(Request $request): JsonResponse
+    public function getLogs(Request $request): ApiSuccessResource
     {
         $limit = $request->get('limit', 100);
         $logs = $this->bpjsLogService->getRecentLogs($limit);
 
-        return response()->json([
-            'success' => true,
-            'data' => $logs
-        ]);
+        return new ApiSuccessResource(BpjsLogResource::collection($logs));
     }
 
     /**
      * Get logs by date range
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param DateRangeRequest $request
+     * @return ApiSuccessResource
      */
-    public function getLogsByDateRange(Request $request): JsonResponse
+    public function getLogsByDateRange(DateRangeRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date'
-        ]);
-
         $logs = $this->bpjsLogService->getLogsByDateRange(
             $request->start_date,
             $request->end_date
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $logs
-        ]);
+        return new ApiSuccessResource(BpjsLogResource::collection($logs));
     }
 
     /**
      * Get logs by HTTP status code
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetLogsByCodeRequest $request
+     * @return ApiSuccessResource
      */
-    public function getLogsByCode(Request $request): JsonResponse
+    public function getLogsByCode(GetLogsByCodeRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'code' => 'required|integer|min:100|max:599'
-        ]);
-
         $limit = $request->get('limit', 50);
         $logs = $this->bpjsLogService->getLogsByCode($request->code, $limit);
 
-        return response()->json([
-            'success' => true,
-            'data' => $logs
-        ]);
+        return new ApiSuccessResource(BpjsLogResource::collection($logs));
     }
 
     /**
      * Get logs by task ID and no_rawat (improved search)
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetLogsByTaskRequest $request
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function getLogsByTask(Request $request): JsonResponse
+    public function getLogsByTask(GetLogsByTaskRequest $request): ApiSuccessResource|JsonResponse
     {
-        $request->validate([
-            'no_rawat' => 'required|string',
-            'task_id' => 'nullable|integer|min:1|max:99'
-        ]);
-
         $log = null;
 
         if ($request->task_id) {
@@ -119,10 +100,7 @@ class BpjsLogController extends Controller
         }
 
         if ($log) {
-            return response()->json([
-                'success' => true,
-                'data' => $log
-            ]);
+            return new ApiSuccessResource(new BpjsLogResource($log));
         }
 
         return response()->json([

@@ -26,12 +26,14 @@ function setupFilters() {
         rows.forEach(row => {
             const name = row.getAttribute('data-name');
             const rm = row.getAttribute('data-rm');
+            const rawat = (row.getAttribute('data-rawat') || '').toLowerCase();
+            const booking = (row.getAttribute('data-kodebooking') || '').toLowerCase();
             const clinic = row.getAttribute('data-clinic');
             const status = row.getAttribute('data-status');
             const hasAnomali = row.getAttribute('data-has-anomali') === 'true';
             const anomalies = (row.getAttribute('data-anomalies') || '').split(',').filter(Boolean);
 
-            let matchesSearch = !query || name.includes(query) || rm.includes(query);
+            let matchesSearch = !query || name.includes(query) || rm.includes(query) || rawat.includes(query) || booking.includes(query);
             let matchesClinic = !selectedClinic || clinic === selectedClinic;
 
             let matchesStatus = true;
@@ -260,7 +262,7 @@ function doAjaxRefresh() {
     const refreshBtn = document.querySelector('[title="Refresh Halaman"]');
     if (refreshBtn) refreshBtn.innerHTML = '<i class="fas fa-circle-notch animate-spin"></i>';
 
-    fetch(`/api/monitoring/analytics?date_from=${fromVal}&date_to=${toVal}`)
+    fetch(`/api/v1/monitoring/analytics?date_from=${fromVal}&date_to=${toVal}`)
         .then(r => r.json())
         .then(res => {
             if (!res.success || !res.data) return;

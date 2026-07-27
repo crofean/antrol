@@ -13,7 +13,7 @@ function triggerSyncToday() {
 
     const fromVal = typeof dateFrom !== 'undefined' ? dateFrom : '';
 
-    fetch('/api/monitoring/sync-today?date=' + encodeURIComponent(fromVal), {
+    fetch('/api/v1/monitoring/sync-today?date=' + encodeURIComponent(fromVal), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -57,7 +57,7 @@ function triggerRangeSync() {
     const fromVal = typeof dateFrom !== 'undefined' ? dateFrom : '';
     const toVal = typeof dateTo !== 'undefined' ? dateTo : '';
 
-    fetch('/api/monitoring/sync-range', {
+    fetch('/api/v1/monitoring/sync-range', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -96,7 +96,7 @@ function startPollingSyncStatus() {
     const toVal = typeof dateTo !== 'undefined' ? dateTo : '';
 
     pollingInterval = setInterval(() => {
-        fetch(`/api/monitoring/sync-status?date_from=${encodeURIComponent(fromVal)}&date_to=${encodeURIComponent(toVal)}`)
+        fetch(`/api/v1/monitoring/sync-status?date_from=${encodeURIComponent(fromVal)}&date_to=${encodeURIComponent(toVal)}`)
         .then(r => r.json())
         .then(res => {
             if (res.success && res.data) {
@@ -133,7 +133,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const fromVal = typeof dateFrom !== 'undefined' ? dateFrom : '';
     const toVal = typeof dateTo !== 'undefined' ? dateTo : '';
 
-    fetch(`/api/monitoring/sync-status?date_from=${encodeURIComponent(fromVal)}&date_to=${encodeURIComponent(toVal)}`)
+    fetch(`/api/v1/monitoring/sync-status?date_from=${encodeURIComponent(fromVal)}&date_to=${encodeURIComponent(toVal)}`)
     .then(r => r.json())
     .then(res => {
         if (res.success && res.data && res.data.status === 'processing') {
@@ -168,7 +168,7 @@ async function syncPatientsInBackground(patients) {
     for (let i = 0; i < patients.length; i++) {
         const patient = patients[i];
         try {
-            const response = await fetch('/api/monitoring/sync-patient', {
+            const response = await fetch('/api/v1/monitoring/sync-patient', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

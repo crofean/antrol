@@ -9,6 +9,16 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
 use Illuminate\Contracts\View\Factory;
+use App\Http\Requests\UpdateTaskIdRequest;
+use App\Http\Requests\UpdateTaskIdFromDbRequest;
+use App\Http\Requests\UpdateTaskIdNowRequest;
+use App\Http\Requests\BatchUpdateTaskIdsRequest;
+use App\Http\Requests\BatalAntreanRequest;
+use App\Http\Requests\FilteredTaskIdLogsRequest;
+use App\Http\Requests\GetTaskIdLogsRequest;
+use App\Http\Requests\ReferensiPendaftaranFilterRequest;
+use App\Http\Resources\TaskIdLogResource;
+use App\Http\Resources\ApiSuccessResource;
 
 class MobileJknController extends Controller
 {
@@ -24,31 +34,29 @@ class MobileJknController extends Controller
     /**
      * Update task ID for a booking
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param UpdateTaskIdRequest $request
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function updateTaskId(Request $request): JsonResponse
+    public function updateTaskId(UpdateTaskIdRequest $request): ApiSuccessResource|JsonResponse
     {
-        $data = $request->all();
-        if (!isset($data['kodebooking'], $data['taskid'])) {
-            return response()->json(['success' => false, 'message' => 'Missing required fields'], 422);
-        }
+        $kodebooking = $request->input('kodebooking');
+        $taskid = (int)$request->input('taskid');
 
         try {
-            if ((int)$data['taskid'] === 99) {
-                $this->mobileJknService->batalAntrean($data['kodebooking'], 'Dibatalkan Oleh Admin');
+            if ($taskid === 99) {
+                $this->mobileJknService->batalAntrean($kodebooking, 'Dibatalkan Oleh Admin');
             }
 
             $result = $this->mobileJknService->updateTaskId(
-                $data['kodebooking'],
-                (int)$data['taskid'],
+                $kodebooking,
+                $taskid,
                 null
-                // $data['waktu']
             );
-            return response()->json([
-                'success' => $result['success'],
-                'message' => $result['error'] ?? $result['metadata']['message'] ?? $result['message'] ?? null,
-                'response' => $result['data'] ?? $result['response'] ?? null,
+            
+            return (new ApiSuccessResource(
+                $result['data'] ?? $result['response'] ?? null,
+                $result['error'] ?? $result['metadata']['message'] ?? $result['message'] ?? 'Success'
+            ))->additional([
                 'batal' => $result['batal']['data'] ?? null
             ]);
         } catch (\Throwable $e) {
@@ -59,37 +67,27 @@ class MobileJknController extends Controller
     /**
      * Update task ID with timestamp from database
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param UpdateTaskIdFromDbRequest $request
+     * @return ApiSuccessResource
      */
-    public function updateTaskIdFromDatabase(Request $request): JsonResponse
+    public function updateTaskIdFromDatabase(UpdateTaskIdFromDbRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'kodebooking' => 'required|string',
-            'taskid' => 'required|integer|in:3,4,5,6,7'
-        ]);
-
         $result = $this->mobileJknService->updateTaskIdFromDatabase(
             $request->kodebooking,
             $request->taskid
         );
 
-        return response()->json($result);
+        return new ApiSuccessResource($result);
     }
 
     /**
      * Update task ID with current timestamp
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param UpdateTaskIdNowRequest $request
+     * @return ApiSuccessResource
      */
-    public function updateTaskIdNow(Request $request): JsonResponse
+    public function updateTaskIdNow(UpdateTaskIdNowRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'kodebooking' => 'required|string',
-            'taskid' => 'required|integer|in:1,2,3,4,5,6,7,99'
-        ]);
-
         if ((int)$request->taskid === 99) {
             $this->mobileJknService->batalAntrean($request->kodebooking, 'Dibatalkan Oleh Admin');
         }
@@ -99,43 +97,30 @@ class MobileJknController extends Controller
             $request->taskid
         );
 
-        return response()->json($result);
+        return new ApiSuccessResource($result);
     }
 
     /**
      * Batch update multiple task IDs
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param BatchUpdateTaskIdsRequest $request
+     * @return ApiSuccessResource
      */
-    public function batchUpdateTaskIds(Request $request): JsonResponse
+    public function batchUpdateTaskIds(BatchUpdateTaskIdsRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'updates' => 'required|array',
-            'updates.*.kodebooking' => 'required|string',
-            'updates.*.taskid' => 'required|integer|in:1,2,3,4,5,6,7,99',
-            'updates.*.waktu' => 'nullable|string'
-        ]);
-
         $result = $this->mobileJknService->batchUpdateTaskIds($request->updates);
 
-        return response()->json($result);
+        return new ApiSuccessResource($result);
     }
 
     /**
      * Cancel antrean per patient (Task 99 & Batal Antrean)
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param BatalAntreanRequest $request
+     * @return JsonResponse|ApiSuccessResource
      */
-    public function batalAntrean(Request $request): JsonResponse
+    public function batalAntrean(BatalAntreanRequest $request): JsonResponse|ApiSuccessResource
     {
-        $request->validate([
-            'kodebooking' => 'nullable|string',
-            'no_rawat' => 'nullable|string',
-            'keterangan' => 'nullable|string'
-        ]);
-
         $kodeBooking = $request->input('kodebooking');
         $noRawat = $request->input('no_rawat');
         $keterangan = $request->input('keterangan', 'Dibatalkan Oleh Admin');
@@ -144,56 +129,53 @@ class MobileJknController extends Controller
             return response()->json(['success' => false, 'message' => 'Harap isi kodebooking atau no_rawat'], 422);
         }
 
-        try {
-            if ($noRawat && !$kodeBooking) {
-                $result = $this->mobileJknService->batalAntreanByNoRawat($noRawat, $keterangan);
-            } else {
-                $result = $this->mobileJknService->batalAntrean($kodeBooking, $keterangan);
-                // Also send Task 99 updatewaktu
-                $nowStr = (string)(now()->timestamp * 1000);
-                $this->mobileJknService->updateTaskId($kodeBooking, 99, $nowStr);
-            }
+        // Reconcile and cancel
+        $result = $this->mobileJknService->cancelAntreanAndReconcile($kodeBooking, $noRawat, $keterangan);
 
-            return response()->json([
-                'success' => $result['success'] ?? true,
-                'message' => $result['metadata']['message'] ?? $result['error'] ?? 'Berhasil membatalkan antrean',
-                'data' => $result
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
-        }
+        return new ApiSuccessResource($result);
     }
 
     /**
-     * Display task ID logs view
+     * Reconcile local database status with BPJS cancellations for the last 3 days
+     *
+     * @param Request $request
+     * @return ApiSuccessResource
+     */
+    public function reconcileCancellations(Request $request): ApiSuccessResource
+    {
+        $days = $request->get('days', 3);
+        $result = $this->mobileJknService->reconcileCancellationsFromBpjs($days);
+        
+        return new ApiSuccessResource($result);
+    }
+
+    /**
+     * Display Task ID log view page
      *
      * @return View
      */
     public function taskIdLogs(): View
     {
-        // Get recent logs for task ID updates
-        $logs = $this->bpjsLogService->getTaskIdLogs();
+        $limit = 25;
+        $logs = $this->bpjsLogService->getTaskIdLogs($limit, 1);
         
-        // Get task ID stats
+        // Compute statistics for last 30 days
         $successCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
-            ->where('code', '>=', 200)
-            ->where('code', '<', 300)
+            ->whereBetween('code', [200, 299])
             ->count();
             
         $errorCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')
-            ->where('code', '>=', 400)
+            ->whereNotBetween('code', [200, 299])
             ->count();
             
         $totalCount = BpjsWsRsLog::where('url', 'like', '%/antrean/updatewaktu%')->count();
-
-        // Get antrean add stats
+        
         $antreanSuccessCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')
-            ->where('code', '>=', 200)
-            ->where('code', '<', 300)
+            ->whereBetween('code', [200, 299])
             ->count();
             
         $antreanErrorCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')
-            ->where('code', '>=', 400)
+            ->whereNotBetween('code', [200, 299])
             ->count();
             
         $antreanTotalCount = BpjsWsRsLog::where('url', 'like', '%/antrean/add%')->count();
@@ -212,39 +194,27 @@ class MobileJknController extends Controller
     /**
      * Get task ID logs API endpoint
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetTaskIdLogsRequest $request
+     * @return ApiSuccessResource
      */
-    public function getTaskIdLogs(Request $request): JsonResponse
+    public function getTaskIdLogs(GetTaskIdLogsRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'perPage' => 'nullable|integer|min:10|max:100',
-            'page' => 'nullable|integer|min:1',
-        ]);
-
         $perPage = $request->perPage ?? 25;
         $page = $request->page ?? 1;
 
         $logs = $this->bpjsLogService->getTaskIdLogs($perPage, $page);
 
-        return response()->json($logs);
+        return new ApiSuccessResource(TaskIdLogResource::collection($logs));
     }
 
     /**
      * Get filtered task ID logs API endpoint
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param FilteredTaskIdLogsRequest $request
+     * @return ApiSuccessResource
      */
-    public function getFilteredTaskIdLogs(Request $request): JsonResponse
+    public function getFilteredTaskIdLogs(FilteredTaskIdLogsRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'startDate' => 'required|date_format:Y-m-d',
-            'endDate' => 'required|date_format:Y-m-d',
-            'perPage' => 'nullable|integer|min:10|max:100',
-            'page' => 'nullable|integer|min:1',
-        ]);
-
         $perPage = $request->perPage ?? 25;
         $page = $request->page ?? 1;
 
@@ -255,53 +225,44 @@ class MobileJknController extends Controller
             $page
         );
 
-        return response()->json($logs);
+        return new ApiSuccessResource(TaskIdLogResource::collection($logs));
     }
     
     /**
      * Get antrean add logs API endpoint
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetTaskIdLogsRequest $request
+     * @return ApiSuccessResource
      */
-    public function getAntreanAddLogs(Request $request): JsonResponse
+    public function getAntreanAddLogs(GetTaskIdLogsRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'perPage' => 'nullable|integer|min:10|max:100',
-            'page' => 'nullable|integer|min:1',
-        ]);
-
         $perPage = $request->perPage ?? 25;
         $page = $request->page ?? 1;
 
         $logs = $this->bpjsLogService->getAntreanAddLogs($perPage, $page);
 
-        return response()->json($logs);
+        return new ApiSuccessResource(TaskIdLogResource::collection($logs));
     }
     
     /**
      * Get patient data needed for task ID updates
      *
      * @param string $regNo
-     * @return JsonResponse
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function getPatientData(string $regNo): JsonResponse
+    public function getPatientData(string $regNo): ApiSuccessResource|JsonResponse
     {
         $data = $this->mobileJknService->getPatientDataForTaskId($regNo);
         
         if (!$data) {
             return response()->json([
-                'status' => false,
+                'success' => false,
                 'message' => 'Data not found',
                 'data' => null
             ], 404);
         }
         
-        return response()->json([
-            'status' => true,
-            'message' => 'Data retrieved successfully',
-            'data' => $data
-        ]);
+        return new ApiSuccessResource($data, 'Data retrieved successfully');
     }
     
     /**
@@ -318,31 +279,31 @@ class MobileJknController extends Controller
      * Send antrean by no_rawat
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function sendAntrian(Request $request): JsonResponse
+    public function sendAntrian(Request $request): ApiSuccessResource|JsonResponse
     {
         $noRawat = $request->input('no_rawat');
         if (!$noRawat) {
-            return response()->json(['status' => false, 'message' => 'no_rawat is required', 'data' => [], 'payload' => null]);
+            return response()->json(['success' => false, 'message' => 'no_rawat is required', 'data' => [], 'payload' => null], 422);
         }
 
         try {
             $service = app(MobileJknService::class);
             $result = $service->sendAddAntreanByNoRawat($noRawat);
-            return response()->json($result);
+            return new ApiSuccessResource($result);
         } catch (\Throwable $e) {
-            return response()->json(['status' => false, 'message' => $e->getMessage(), 'data' => [], 'payload' => null], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage(), 'data' => [], 'payload' => null], 500);
         }
     }
 
     /**
-     * Display referensi pendafataran MJKN page
+     * Display referensi pendaftaran MJKN page
      *
-     * @param Request $request
+     * @param ReferensiPendaftaranFilterRequest $request
      * @return View
      */
-    public function referensiPendafataran(Request $request): View
+    public function referensiPendaftaran(ReferensiPendaftaranFilterRequest $request): View
     {
         $query = \App\Models\ReferensiMobilejknBpjs::with(['regPeriksa.pasien', 'referensiMobilejknBpjsTaskid']);
 
@@ -411,16 +372,16 @@ class MobileJknController extends Controller
             $filteredCount = $filteredQuery->count();
         }
 
-        return view('mobilejkn.referensi-pendafataran', compact('referensis', 'totalReferensi', 'todayReferensi', 'filteredCount', 'request'));
+        return view('mobilejkn.referensi-pendaftaran', compact('referensis', 'totalReferensi', 'todayReferensi', 'filteredCount', 'request'));
     }
 
     /**
      * Update status for filtered referensi records
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param ReferensiPendaftaranFilterRequest $request
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function updateReferensiStatus(Request $request): JsonResponse
+    public function updateReferensiStatus(ReferensiPendaftaranFilterRequest $request): ApiSuccessResource|JsonResponse
     {
         try {
             // If frontend provided explicit list of booking numbers (modal preview), use that
@@ -490,14 +451,13 @@ class MobileJknController extends Controller
 
                     $oldStatus = $referensi->status;
 
-                    // Calculate validation timestamp based on tanggal periksa and pemeriksaan ralan time (based on task id 4 with nip as petugas)
+                    // Calculate validation timestamp based on tanggal periksa and pemeriksaan ralan time
                     $validasiTimestamp = now();
                     $pemeriksaanRalan = \App\Models\PemeriksaanRalan::where('no_rawat', $referensi->no_rawat)
                         ->whereNotNull('nip')
                         ->first();
                     
                     if ($pemeriksaanRalan && $pemeriksaanRalan->jam_rawat) {
-                        // Use the date from tanggalperiksa and time from pemeriksaan ralan minus 10 minutes
                         $validasiTimestamp = \Carbon\Carbon::parse($referensi->tanggalperiksa, 'Asia/Jakarta')
                             ->setTime(
                                 $pemeriksaanRalan->jam_rawat->hour,
@@ -540,14 +500,14 @@ class MobileJknController extends Controller
                 $message .= "\n\nError:\n" . implode("\n", $errors);
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => $message,
+            return (new ApiSuccessResource(
+                $updatedRecords,
+                $message
+            ))->additional([
                 'updated_count' => $updatedCount,
                 'checkin_count' => $checkinCount,
                 'cancelled_count' => $cancelledCount,
-                'errors' => $errors,
-                'updated_records' => $updatedRecords
+                'errors' => $errors
             ]);
 
         } catch (\Exception $e) {

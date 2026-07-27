@@ -69,16 +69,26 @@
                         <i class="fas fa-moon dark:hidden"></i>
                         <i class="fas fa-sun hidden dark:block text-amber-400"></i>
                     </button>
-                    @if (Route::has('login'))
+                    @if(session()->has('auth_user'))
                         <div class="hidden sm:flex items-center space-x-3">
-                            @auth
-                                <a href="{{ url('/dashboard') }}" class="text-sm font-semibold hover:text-blue-600 transition-colors">Dashboard</a>
-                            @else
-                                <a href="{{ route('login') }}" class="text-sm font-semibold hover:text-blue-600 transition-colors">Log in</a>
-                                @if (Route::has('register'))
-                                    <a href="{{ route('register') }}" class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20">Register</a>
-                                @endif
-                            @endauth
+                            <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-850 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center">
+                                <i class="fas fa-user-circle mr-1.5 text-blue-500"></i>
+                                {{ session('auth_user')['username'] }}
+                            </span>
+                            <form action="{{ route('logout') }}" method="POST" class="inline">
+                                @csrf
+                                <button type="submit" class="text-xs font-semibold text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl transition-all flex items-center">
+                                    <i class="fas fa-sign-out-alt mr-1.5"></i>
+                                    Logout
+                                </button>
+                            </form>
+                        </div>
+                    @else
+                        <div class="hidden sm:flex items-center">
+                            <a href="{{ route('login') }}" class="text-xs font-semibold text-blue-600 bg-blue-600/10 hover:bg-blue-600/20 px-3 py-1.5 rounded-xl transition-all flex items-center">
+                                <i class="fas fa-sign-in-alt mr-1.5"></i>
+                                Login
+                            </a>
                         </div>
                     @endif
                 </div>
@@ -115,7 +125,7 @@
                 </a>
 
                 <!-- Referensi MJKN -->
-                <a href="{{ route('referensi.pendafataran') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
+                <a href="{{ route('referensi.pendaftaran') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
                     <div class="w-14 h-14 rounded-2xl bg-teal-500/10 flex items-center justify-center text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-all duration-300">
                         <i class="fas fa-mobile-screen-button text-2xl"></i>
                     </div>

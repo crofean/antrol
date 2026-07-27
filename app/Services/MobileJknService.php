@@ -722,7 +722,7 @@ class MobileJknService
             // batalAntrean is called explicitly by controller or command, no need to duplicate here
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'X-cons-id' => $this->consId,
                 'X-timestamp' => $timestamp,
@@ -2157,7 +2157,7 @@ class MobileJknService
             ]);
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'x-cons-id' => $this->consId,
                 'x-timestamp' => $timestamp,
@@ -2209,7 +2209,7 @@ class MobileJknService
                     ]
                 );
 
-                \App\Models\BpjsPatientVisit::where('kodebooking', $kodeBooking)->update([
+                BpjsPatientVisit::where('kodebooking', $kodeBooking)->update([
                     'status' => 'Batal',
                     'last_sync' => now()
                 ]);
@@ -2610,5 +2610,69 @@ class MobileJknService
                 'status_code' => 500
             ];
         }
+    }
+
+    /**
+     * Cancel antrean and update cancellation records status
+     *
+     * @param string|null $kodeBooking
+     * @param string|null $noRawat
+     * @param string $keterangan
+     * @return array
+     */
+    public function cancelAntreanAndReconcile(?string $kodeBooking, ?string $noRawat, string $keterangan = 'Dibatalkan Oleh Admin'): array
+    {
+        if ($kodeBooking) {
+            $result = $this->batalAntrean($kodeBooking, $keterangan);
+        } else {
+            $result = $this->batalAntreanByNoRawat($noRawat, $keterangan);
+        }
+        return $result;
+    }
+
+    /**
+     * Reconcile cancelled records with BPJS (sync cancel status)
+     *
+     * @param int $days
+     * @return array
+     */
+    public function reconcileCancellationsFromBpjs(int $days = 3): array
+    {
+        $dateLimit = now()->subDays($days)->toDateString();
+
+        $referensis = ReferensiMobilejknBpjs::where('status', 'Batal')
+            ->where('statuskirim', 'Belum')
+            ->whereDate('validasi', '>=', $dateLimit)
+            ->get();
+
+        $cancelledCount = 0;
+
+        foreach ($referensis as $ref) {
+            $res = $this->batalAntrean($ref->nobooking, 'Dibatalkan Oleh Admin');
+            if ($res['success'] ?? false || (isset($res['metadata']['code']) && $res['metadata']['code'] == 200)) {
+                $ref->update(['statuskirim' => 'Sudah']);
+                $cancelledCount++;
+            }
+        }
+
+        $batals = \App\Models\ReferensiMobilejknBpjsBatal::where('statuskirim', 'Belum')
+            ->whereDate('tanggalbatal', '>=', $dateLimit)
+            ->get();
+
+        foreach ($batals as $batal) {
+            $res = $this->batalAntrean($batal->nobooking, $batal->keterangan ?? 'Dibatalkan');
+            if ($res['success'] ?? false || (isset($res['metadata']['code']) && $res['metadata']['code'] == 200)) {
+                $batal->update(['statuskirim' => 'Sudah']);
+                $cancelledCount++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Manual reconciliation of cancellations completed.',
+            'stats' => [
+                'task_cancelled' => $cancelledCount
+            ]
+        ];
     }
 }
