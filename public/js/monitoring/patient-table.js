@@ -262,7 +262,7 @@ function doAjaxRefresh() {
     const refreshBtn = document.querySelector('[title="Refresh Halaman"]');
     if (refreshBtn) refreshBtn.innerHTML = '<i class="fas fa-circle-notch animate-spin"></i>';
 
-    fetch(`/api/monitoring/analytics?date_from=${fromVal}&date_to=${toVal}`)
+    fetch(`/api/v1/monitoring/analytics?date_from=${fromVal}&date_to=${toVal}`)
         .then(r => r.json())
         .then(res => {
             if (!res.success || !res.data) return;

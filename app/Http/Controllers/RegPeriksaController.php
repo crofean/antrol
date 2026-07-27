@@ -9,6 +9,12 @@ use App\Models\ReferensiMobilejknBpjs;
 use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
 use Carbon\Carbon;
+use App\Http\Requests\DateRangeRequest;
+use App\Http\Requests\GetPatientsByStatusRequest;
+use App\Http\Requests\GetPatientsByDoctorRequest;
+use App\Http\Requests\GetPatientsByPolyclinicRequest;
+use App\Http\Resources\PatientResource;
+use App\Http\Resources\ApiSuccessResource;
 
 class RegPeriksaController extends Controller
 {
@@ -69,7 +75,7 @@ class RegPeriksaController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $patients->items(),
+            'data' => PatientResource::collection($patients->items()),
             'pagination' => [
                 'current_page' => $patients->currentPage(),
                 'last_page' => $patients->lastPage(),
@@ -86,79 +92,57 @@ class RegPeriksaController extends Controller
      * Get today's BPJS patients as JSON
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return ApiSuccessResource
      */
-    public function getTodayBpjsPatients(Request $request): JsonResponse
+    public function getTodayBpjsPatients(Request $request): ApiSuccessResource
     {
         $date = $request->get('date', Carbon::today()->format('Y-m-d'));
         $patients = $this->regPeriksaService->getTodayBpjsPatients($date);
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients,
-            'date' => $date
-        ]);
+        return (new ApiSuccessResource(PatientResource::collection($patients)))
+            ->additional(['date' => $date]);
     }
 
     /**
      * Get patients by date range
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param DateRangeRequest $request
+     * @return ApiSuccessResource
      */
-    public function getPatientsByDateRange(Request $request): JsonResponse
+    public function getPatientsByDateRange(DateRangeRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date',
-            'kd_pj' => 'nullable|string'
-        ]);
-
         $patients = $this->regPeriksaService->getPatientsByDateRange(
             $request->start_date,
             $request->end_date,
             $request->kd_pj
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients
-        ]);
+        return new ApiSuccessResource(PatientResource::collection($patients));
     }
 
     /**
      * Get patient statistics
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return ApiSuccessResource
      */
-    public function getStatistics(Request $request): JsonResponse
+    public function getStatistics(Request $request): ApiSuccessResource
     {
         $date = $request->get('date', Carbon::today()->format('Y-m-d'));
         $statistics = $this->regPeriksaService->getTodayStatistics($date);
 
-        return response()->json([
-            'success' => true,
-            'data' => $statistics
-        ]);
+        return new ApiSuccessResource($statistics);
     }
 
     /**
      * Get patient by registration number
      *
-     * @param string $noRawat
-     * @return JsonResponse
+     * @return ApiSuccessResource|JsonResponse
      */
-    public function getPatient(): JsonResponse
+    public function getPatient(): ApiSuccessResource|JsonResponse
     {
         $noRawat = request()->get('no_rawat');
         $patient = $this->regPeriksaService->getPatientByNoRawat($noRawat);
-
-        $ref = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->where('status', 'Checkin')->first();
-
-        $taskList = $this->mobileJknService->getTaskIdRecord($noRawat);
-
-        $task = $this->mobileJknService->getPatientDataForTaskId($noRawat);
 
         if (!$patient) {
             return response()->json([
@@ -167,11 +151,17 @@ class RegPeriksaController extends Controller
             ], 404);
         }
 
+        $ref = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->where('status', 'Checkin')->first();
+
+        $taskList = $this->mobileJknService->getTaskIdRecord($noRawat);
+
+        $task = $this->mobileJknService->getPatientDataForTaskId($noRawat);
+
         $refArray = $ref ? $ref->toArray() : null;
 
-        return response()->json([
-            'success' => true,
-            'data' => array_merge($patient->toArray(), ['referensi_mobilejkn_bpjs' => $refArray]),
+        return (new ApiSuccessResource(
+            array_merge($patient->toArray(), ['referensi_mobilejkn_bpjs' => $refArray])
+        ))->additional([
             'task' => $task ?? null,
             'task_list' => $taskList ?? null
         ]);
@@ -180,72 +170,48 @@ class RegPeriksaController extends Controller
     /**
      * Get patients by status
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetPatientsByStatusRequest $request
+     * @return ApiSuccessResource
      */
-    public function getPatientsByStatus(Request $request): JsonResponse
+    public function getPatientsByStatus(GetPatientsByStatusRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'status' => 'required|string',
-            'date' => 'nullable|date'
-        ]);
-
         $patients = $this->regPeriksaService->getPatientsByStatus(
             $request->status,
             $request->date
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients
-        ]);
+        return new ApiSuccessResource(PatientResource::collection($patients));
     }
 
     /**
      * Get patients by doctor
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetPatientsByDoctorRequest $request
+     * @return ApiSuccessResource
      */
-    public function getPatientsByDoctor(Request $request): JsonResponse
+    public function getPatientsByDoctor(GetPatientsByDoctorRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'kd_dokter' => 'required|string',
-            'date' => 'nullable|date'
-        ]);
-
         $patients = $this->regPeriksaService->getPatientsByDoctor(
             $request->kd_dokter,
             $request->date
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients
-        ]);
+        return new ApiSuccessResource(PatientResource::collection($patients));
     }
 
     /**
      * Get patients by polyclinic
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param GetPatientsByPolyclinicRequest $request
+     * @return ApiSuccessResource
      */
-    public function getPatientsByPolyclinic(Request $request): JsonResponse
+    public function getPatientsByPolyclinic(GetPatientsByPolyclinicRequest $request): ApiSuccessResource
     {
-        $request->validate([
-            'kd_poli' => 'required|string',
-            'date' => 'nullable|date'
-        ]);
-
         $patients = $this->regPeriksaService->getPatientsByPolyclinic(
             $request->kd_poli,
             $request->date
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $patients
-        ]);
+        return new ApiSuccessResource(PatientResource::collection($patients));
     }
 }

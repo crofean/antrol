@@ -39,7 +39,7 @@
             <a href="{{ route('taskid.logs') }}" class="glass px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center">
                 <i class="fas fa-tasks mr-2"></i>Task ID Logs
             </a>
-            <a href="{{ route('referensi.pendafataran', ['date_from' => $filters['date'], 'date_to' => $filters['date']]) }}" class="glass px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors flex items-center">
+            <a href="{{ route('referensi.pendaftaran', ['date_from' => $filters['date'], 'date_to' => $filters['date']]) }}" class="glass px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors flex items-center">
                 <i class="fas fa-file-alt mr-2"></i>Referensi MJKN
             </a>
             <a href="{{ route('command.index') }}" class="glass px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors flex items-center">
@@ -298,7 +298,7 @@
         `;
         modal.classList.remove('hidden');
 
-        let url = `/api/bpjs-logs/by-task?no_rawat=${encodeURIComponent(noRawat)}`;
+        let url = `/api/v1/bpjs-logs/by-task?no_rawat=${encodeURIComponent(noRawat)}`;
         if (taskId) url += `&task_id=${encodeURIComponent(taskId)}`;
 
         fetch(url)
@@ -400,7 +400,7 @@
         document.getElementById('showAntreanFormButton').classList.add('hidden');
         document.getElementById('taskIdAutoFlowButton').classList.add('hidden');
         
-        fetch(`/api/regperiksa/patient?no_rawat=${noRawat}`)
+        fetch(`/api/v1/regperiksa/patient?no_rawat=${noRawat}`)
             .then(r => r.json())
             .then(res => {
                 if (res.success) {
@@ -518,7 +518,7 @@
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-circle-notch animate-spin mr-2"></i> Syncing...`;
 
-        fetch('/api/mobilejkn/update-task-id', {
+        fetch('/api/v1/mobilejkn/update-task-id', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
             body: JSON.stringify(payload)
@@ -552,7 +552,7 @@
             </div>`;
             
             try {
-                const r = await fetch('/api/mobilejkn/update-task-id', {
+                const r = await fetch('/api/v1/mobilejkn/update-task-id', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
                     body: JSON.stringify({ kodebooking: currentKodeBooking || currentNoRawat, taskid: tid })
@@ -635,7 +635,7 @@
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-circle-notch animate-spin mr-2"></i> Adding...`;
 
-        fetch(`/api/antrian`, {
+        fetch(`/api/v1/antrian`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
             body: JSON.stringify({ no_rawat: currentNoRawat })

@@ -78,7 +78,7 @@ function showPatientDetail(noRawat) {
         panel.classList.add('open');
     }, 50);
 
-    fetch(`/api/monitoring/patient/${encodeURIComponent(noRawat)}`)
+    fetch(`/api/v1/monitoring/patient/${encodeURIComponent(noRawat)}`)
         .then(res => res.json())
         .then(res => {
             if (res.success && res.data) {
@@ -152,13 +152,14 @@ function renderDetailContent(patient) {
 
     let timelineHTML = '';
     let timelineTasks = [3, 4, 5, 6, 7];
-    if ((patient.timestamps_real && patient.timestamps_real[99]) || (patient.timestamps_sent && patient.timestamps_sent[99])) {
+    if ((patient.timestamps_real && (patient.timestamps_real['task_99'] || patient.timestamps_real[99])) || 
+        (patient.timestamps_sent && (patient.timestamps_sent['task_99'] || patient.timestamps_sent[99]))) {
         timelineTasks.push(99);
     }
 
     timelineTasks.forEach(i => {
-        const realT = (patient.timestamps_real || {})[i];
-        const sentT = (patient.timestamps_sent || {})[i];
+        const realT = (patient.timestamps_real || {})['task_' + i] || (patient.timestamps_real || {})[i] || (patient.timestamps_real || {})[String(i)];
+        const sentT = (patient.timestamps_sent || {})['task_' + i] || (patient.timestamps_sent || {})[i] || (patient.timestamps_sent || {})[String(i)];
         const task = taskDetails[i];
 
         const parsedReal = parseJsDate(realT);
@@ -359,7 +360,7 @@ function crossVerifyBpjs(noRawat) {
     btn.disabled = true;
     btn.innerHTML = `<i class="fas fa-circle-notch animate-spin mr-1"></i> Menghubungi BPJS...`;
 
-    fetch(`/api/monitoring/verify/${encodeURIComponent(noRawat)}`)
+    fetch(`/api/v1/monitoring/verify/${encodeURIComponent(noRawat)}`)
         .then(res => res.json())
         .then(res => {
             btn.disabled = false;

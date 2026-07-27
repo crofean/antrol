@@ -35,11 +35,11 @@
     const dateFrom = '{{ $dateFrom }}';
     const dateTo = '{{ $dateTo }}';
 </script>
-<script src="{{ asset('js/monitoring/core.js') }}"></script>
-<script src="{{ asset('js/monitoring/charts.js') }}"></script>
-<script src="{{ asset('js/monitoring/patient-table.js') }}"></script>
-<script src="{{ asset('js/monitoring/sync.js') }}"></script>
-<script src="{{ asset('js/monitoring/detail-panel.js') }}"></script>
-<script src="{{ asset('js/monitoring/clinic-modal.js') }}"></script>
-<script src="{{ asset('js/monitoring/bpjs-report.js') }}"></script>
+<script src="{{ asset('js/monitoring/core.js') }}?v={{ filemtime(public_path('js/monitoring/core.js')) }}"></script>
+<script src="{{ asset('js/monitoring/charts.js') }}?v={{ filemtime(public_path('js/monitoring/charts.js')) }}"></script>
+<script src="{{ asset('js/monitoring/patient-table.js') }}?v={{ filemtime(public_path('js/monitoring/patient-table.js')) }}"></script>
+<script src="{{ asset('js/monitoring/sync.js') }}?v={{ filemtime(public_path('js/monitoring/sync.js')) }}"></script>
+<script src="{{ asset('js/monitoring/detail-panel.js') }}?v={{ filemtime(public_path('js/monitoring/detail-panel.js')) }}"></script>
+<script src="{{ asset('js/monitoring/clinic-modal.js') }}?v={{ filemtime(public_path('js/monitoring/clinic-modal.js')) }}"></script>
+<script src="{{ asset('js/monitoring/bpjs-report.js') }}?v={{ filemtime(public_path('js/monitoring/bpjs-report.js')) }}"></script>
 @endpush

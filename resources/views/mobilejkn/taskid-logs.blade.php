@@ -20,7 +20,7 @@
                    class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
                     <i class="fas fa-arrow-left mr-2"></i>Back to Patients
                 </a>
-                <a href="{{ route('referensi.pendafataran') }}"
+                <a href="{{ route('referensi.pendaftaran') }}"
                     class="glass px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center">
                     <i class="fas fa-file-alt mr-2"></i>Referensi MJKN
                 </a>
@@ -232,9 +232,9 @@
         
         tbody.innerHTML = `<tr><td colspan="6" class="py-20 text-center"><div class="inline-block w-8 h-8 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin"></div></td></tr>`;
         
-        let url = `/api/mobilejkn/${tab == 'taskid' ? 'task-id-logs' : 'antrean-logs'}?page=${state[tab].page}&perPage=${state[tab].perPage}`;
+        let url = `/api/v1/mobilejkn/${tab == 'taskid' ? 'task-id-logs' : 'antrean-logs'}?page=${state[tab].page}&perPage=${state[tab].perPage}`;
         if(state[tab].startDate && state[tab].endDate && tab == 'taskid') {
-             url = `/api/mobilejkn/filtered-task-id-logs?startDate=${state[tab].startDate}&endDate=${state[tab].endDate}&page=${state[tab].page}&perPage=${state[tab].perPage}`;
+             url = `/api/v1/mobilejkn/filtered-task-id-logs?startDate=${state[tab].startDate}&endDate=${state[tab].endDate}&page=${state[tab].page}&perPage=${state[tab].perPage}`;
         }
 
         axios.get(url).then(res => {

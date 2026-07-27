@@ -22,7 +22,7 @@ function fetchBpjsDailyReport() {
 
     toggleBpjsLoading(true);
 
-    fetch(`/api/monitoring/bpjs-dashboard/tanggal?tanggal=${dateVal}`)
+    fetch(`/api/v1/monitoring/bpjs-dashboard/tanggal?tanggal=${dateVal}`)
         .then(res => res.json())
         .then(res => {
             toggleBpjsLoading(false);
@@ -46,7 +46,7 @@ function fetchBpjsMonthlyReport() {
 
     toggleBpjsLoading(true);
 
-    fetch(`/api/monitoring/bpjs-dashboard/bulan?bulan=${month}&tahun=${year}`)
+    fetch(`/api/v1/monitoring/bpjs-dashboard/bulan?bulan=${month}&tahun=${year}`)
         .then(res => res.json())
         .then(res => {
             toggleBpjsLoading(false);
