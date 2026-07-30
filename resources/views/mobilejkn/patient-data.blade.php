@@ -172,7 +172,7 @@
         $('#initialState').addClass('hidden');
         $('#patientDataResults').addClass('opacity-50 pointer-events-none');
         
-        axios.get(`/api/mobilejkn/get-patient-data/${no}`)
+        axios.get(`/api/v1/mobilejkn/get-patient-data/${no}`)
             .then(res => {
                 if(res.data.status) renderPatient(res.data.data);
                 else throw new Error(res.data.message);
@@ -220,7 +220,7 @@
 
     function updateSingle(bc, tid) {
         if(!confirm(`Push Task ID ${tid} for ${bc}?`)) return;
-        axios.post('/api/mobilejkn/update-task-id-now', { kodebooking: bc, taskid: tid })
+        axios.post('/api/v1/mobilejkn/update-task-id-now', { kodebooking: bc, taskid: tid })
             .then(() => fetchPatient($('#regNo').val()))
             .catch(e => alert('Sync error: ' + e.message));
     }
@@ -236,7 +236,7 @@
          if(missing.length == 0) return alert('Trajectory complete.');
          if(!confirm(`Batch update sequence: ${missing.join(' → ')}?`)) return;
 
-         axios.post('/api/mobilejkn/batch-update-task-ids', { kodebooking: bc, taskids: missing })
+         axios.post('/api/v1/mobilejkn/batch-update-task-ids', { kodebooking: bc, taskids: missing })
             .then(res => {
                 alert(`Pipeline successful. ${res.data.data.updated} tasks updated.`);
                 fetchPatient($('#regNo').val());

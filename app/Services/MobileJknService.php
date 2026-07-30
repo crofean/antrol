@@ -2,14 +2,16 @@
 
 namespace App\Services;
 
+use App\Models\BpjsDashboardWaktutunggu;
+use App\Models\BpjsPatientVisit;
+use App\Models\Jadwal;
 use App\Models\MapingDokterDpjpvclaim;
 use App\Models\MapingPoliBpjs;
-use App\Models\ReferensiMobilejknBpjs;
-use App\Models\ReferensiMobilejknBpjsBatal;
-use App\Models\RegPeriksa;
+use App\Models\Pasien;
 use App\Models\PemeriksaanRalan;
-use App\Models\Petugas;
-use App\Models\Dokter;
+use App\Models\ReferensiMobilejknBpjs;
+use App\Models\ReferensiMobilejknBpjsTaskid;
+use App\Models\RegPeriksa;
 use App\Models\ResepObat;
 use App\Services\BpjsLogService;
 use Carbon\Carbon;
@@ -17,10 +19,7 @@ use Exception;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
-use App\Models\ReferensiMobilejknBpjsTaskid;
 use Throwable;
-use App\Models\Jadwal;
-use App\Models\Pasien;
 
 class MobileJknService
 {
@@ -28,7 +27,7 @@ class MobileJknService
     protected $baseUrlVclaim = 'https://apijkn.bpjs-kesehatan.go.id/vclaim-rest';
     protected $consId;
     protected $userKey;
-    protected $secretKey;    
+    protected $secretKey;
     protected $bpjsLogService;
 
     public function __construct(BpjsLogService $bpjsLogService)
@@ -43,7 +42,7 @@ class MobileJknService
 
     /**
      * Decrypt string using AES-256-CBC
-     * 
+     *
      * @param string $key The key to use for decryption
      * @param string $string The string to decrypt
      * @return string Decrypted string
@@ -51,21 +50,21 @@ class MobileJknService
     protected function stringDecrypt($key, $string)
     {
         $encrypt_method = 'AES-256-CBC';
-        
+
         // hash
         $key_hash = hex2bin(hash('sha256', $key));
-        
+
         // iv - encrypt method AES-256-CBC expects 16 bytes - else you will get a warning
         $iv = substr(hex2bin(hash('sha256', $key)), 0, 16);
-        
+
         $output = openssl_decrypt(base64_decode($string), $encrypt_method, $key_hash, OPENSSL_RAW_DATA, $iv);
-        
+
         return $output;
     }
-    
+
     /**
      * Generate decryption key for BPJS responses
-     * 
+     *
      * @param string $timestamp Timestamp from the request
      * @return string Decryption key
      */
@@ -77,7 +76,7 @@ class MobileJknService
 
     /**
      * Decompress string using LZString library
-     * 
+     *
      * @param string $string The string to decompress
      * @return string Decompressed string
      */
@@ -110,7 +109,7 @@ class MobileJknService
     {
         // Try to find if patient has a referensi (referensi pendaftaran mobile jkn)
         $referensi = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->first();
-        
+
         // If referensi exists, use nobooking, otherwise use no_rawat
         return $referensi ? $referensi->nobooking : $noRawat;
     }
@@ -145,12 +144,12 @@ class MobileJknService
                     $rawTimestamp = $this->getTask7Timestamp($kodebooking);
                     break;
                 case 99:
-                    $rawTimestamp = (string) now()->timestamp * 1000; // Current time in milliseconds
+                    $rawTimestamp = (string) ((int) (now()->timestamp * 1000));
                     break;
                 default:
                     return null;
             }
-            
+
             // If we got a timestamp, ensure it's within the service date
             if ($rawTimestamp !== null) {
                 $serviceDate = $this->getServiceDate($kodebooking);
@@ -165,7 +164,7 @@ class MobileJknService
                     return (string)$adjustedTimestamp;
                 }
             }
-            
+
             return $rawTimestamp;
         } catch (Exception $e) {
             Log::error('Error getting task timestamp from database', [
@@ -185,7 +184,7 @@ class MobileJknService
         // First try to get from referensi_mobilejkn_bpjs
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
 
-        if ($referensi && $referensi->validasi) {
+        if ($referensi && $referensi->validasi && (int)$referensi->validasi->format('Y') > 1970) {
             return $referensi->validasi->timestamp * 1000;
         }
 
@@ -276,7 +275,7 @@ class MobileJknService
             // Use service date for the date part, just the time from jam_rawat
             $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
             $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString(), 'Asia/Jakarta');
-            
+
             // Validate that the time is on the correct service date
             if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
                 Log::warning('Task 5: Timestamp date mismatch, using fallback', [
@@ -296,7 +295,7 @@ class MobileJknService
             if ($pemeriksaan && $pemeriksaan->jam_rawat) {
                 $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $pemeriksaan->tgl_perawatan));
                 $waktu = Carbon::parse($datePart . ' ' . $pemeriksaan->jam_rawat->toTimeString(), 'Asia/Jakarta');
-                
+
                 // Validate that the time is on the correct service date
                 if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
                     Log::warning('Task 5 (alt): Timestamp date mismatch, using fallback', [
@@ -353,7 +352,7 @@ class MobileJknService
             // Use service date for the date part, just the time from jam
             $datePart = $serviceDate ? $serviceDate->toDateString() : (str_replace(' 00:00:00', '', $resep->tgl_perawatan));
             $waktu = Carbon::parse($datePart . ' ' . $resep->jam->toTimeString(), 'Asia/Jakarta');
-            
+
             // Validate that the time is on the correct service date
             if ($serviceDate && $waktu->toDateString() !== $serviceDate->toDateString()) {
                 Log::warning('Task 6: Timestamp date mismatch, using fallback', [
@@ -390,7 +389,7 @@ class MobileJknService
     {
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         if ($referensi) $kodebooking = $referensi->no_rawat;
-        
+
         // Get service date to ensure times are on the correct date
         $serviceDate = $this->getServiceDate($kodebooking);
 
@@ -418,20 +417,20 @@ class MobileJknService
     private function getPreviousTaskTime(string $kodebooking, int $taskid): ?int
     {
         if ($taskid <= 1) return null;
-        
+
         $previousTaskId = $taskid - 1;
         $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
         $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
-        
+
         $previousTask = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat)
             ->where('taskid', (string) $previousTaskId)
             ->first();
-        
+
         if ($previousTask && $previousTask->waktu) {
             $previousTime = Carbon::parse($previousTask->waktu, 'Asia/Jakarta');
             return (int)($previousTime->timestamp * 1000);
         }
-        
+
         return null;
     }
 
@@ -453,10 +452,10 @@ class MobileJknService
         try {
             // First priority: Try to get from database (registration date)
             $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
-            
+
             if ($referensi && $referensi->no_rawat) {
                 $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
-                
+
                 if ($regPeriksa && $regPeriksa->tgl_registrasi) {
                     $serviceDate = Carbon::parse($regPeriksa->tgl_registrasi, 'Asia/Jakarta');
                     Log::debug('Service date from reg_periksa (by nobooking)', [
@@ -467,7 +466,7 @@ class MobileJknService
                     return $serviceDate->startOfDay();
                 }
             }
-            
+
             // Second priority: Try to get from reg_periksa directly using kodebooking as no_rawat
             $regPeriksa = RegPeriksa::where('no_rawat', $kodebooking)->first();
             if ($regPeriksa && $regPeriksa->tgl_registrasi) {
@@ -478,10 +477,10 @@ class MobileJknService
                 ]);
                 return $serviceDate->startOfDay();
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::debug('Failed to get service date from database', ['error' => $e->getMessage()]);
         }
-        
+
         // Fallback: Extract date from kodebooking format (YYYY/MM/DD/...)
         try {
             $parts = explode('/', $kodebooking);
@@ -489,7 +488,7 @@ class MobileJknService
                 $year = $parts[0];
                 $month = $parts[1];
                 $day = $parts[2];
-                
+
                 if (is_numeric($year) && is_numeric($month) && is_numeric($day)) {
                     $serviceDate = Carbon::createFromDate($year, $month, $day, 'Asia/Jakarta');
                     Log::debug('Service date extracted from kodebooking (fallback)', [
@@ -499,10 +498,10 @@ class MobileJknService
                     return $serviceDate->startOfDay();
                 }
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::debug('Failed to extract service date from kodebooking', ['error' => $e->getMessage()]);
         }
-        
+
         return null;
     }
 
@@ -517,17 +516,17 @@ class MobileJknService
     {
         // Use proper timezone handling on Carbon instances instead of changing global state
         $localTz = config('app.timezone', 'Asia/Jakarta');
-        
+
         $waktuTime = Carbon::createFromTimestampMs($waktuMs)->setTimezone($localTz);
         $serviceDateStart = $serviceDate->copy()->startOfDay()->setTimezone($localTz);
         $serviceDateEnd = $serviceDate->copy()->endOfDay()->setTimezone($localTz);
-        
+
         Log::debug('Time validation check', [
             'waktu_time' => $waktuTime->toDateTimeString(),
             'service_date_start' => $serviceDateStart->toDateTimeString(),
             'service_date_end' => $serviceDateEnd->toDateTimeString()
         ]);
-        
+
         // If time is before service date, set to start of service date
         if ($waktuTime->isBefore($serviceDateStart)) {
             Log::warning('Time is before service date, adjusting to service date start', [
@@ -537,7 +536,7 @@ class MobileJknService
             ]);
             return (int)($serviceDateStart->timestamp * 1000);
         }
-        
+
         // If time is after service date, set to 23:59:59 of service date (not quite end of day)
         if ($waktuTime->isAfter($serviceDateEnd)) {
             $cappedTime = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone($localTz);
@@ -548,7 +547,7 @@ class MobileJknService
             ]);
             return (int)($cappedTime->timestamp * 1000);
         }
-        
+
         return $waktuMs;
     }
 
@@ -563,19 +562,19 @@ class MobileJknService
     private function ensureTimeAfterPrevious(int $currentWaktu, int $previousWaktu, ?Carbon $serviceDate = null): int
     {
         $localTz = config('app.timezone', 'Asia/Jakarta');
-        
+
         $minTimeAfterPrevious = $previousWaktu + (10 * 60 * 1000); // 10 minutes in milliseconds
-        
+
         // Check if the time is within service date if provided
         if ($serviceDate) {
             $serviceDateEnd = $serviceDate->copy()->setTime(23, 59, 59)->setTimezone($localTz);
             $serviceDateEndMs = (int)($serviceDateEnd->timestamp * 1000);
-            
+
             // If adding 10 minutes would exceed service date, cap it to end of day minus 1 minute
             if ($minTimeAfterPrevious > $serviceDateEndMs) {
                 $cappedTime = $serviceDateEnd->copy()->subMinute();
                 $cappedMs = (int)($cappedTime->timestamp * 1000);
-                
+
                 Log::warning('Adding 10 minutes exceeds service date, capping to 23:58:59', [
                     'previous_waktu' => $previousWaktu,
                     'would_be' => $minTimeAfterPrevious,
@@ -585,7 +584,7 @@ class MobileJknService
                 return $cappedMs;
             }
         }
-        
+
         if ($currentWaktu <= $previousWaktu) {
             Log::info('Time adjustment needed', [
                 'current_waktu' => $currentWaktu,
@@ -594,7 +593,7 @@ class MobileJknService
             ]);
             return $minTimeAfterPrevious;
         }
-        
+
         return $currentWaktu;
     }
 
@@ -608,7 +607,7 @@ class MobileJknService
     private function ensureTimeAfterPreviousSimple(int $currentWaktu, int $previousWaktu): int
     {
         $minTimeAfterPrevious = $previousWaktu + (10 * 60 * 1000); // 10 minutes in milliseconds
-        
+
         if ($currentWaktu <= $previousWaktu) {
             Log::info('Time adjustment needed', [
                 'current_waktu' => $currentWaktu,
@@ -617,7 +616,7 @@ class MobileJknService
             ]);
             return $minTimeAfterPrevious;
         }
-        
+
         return $currentWaktu;
     }
 
@@ -645,7 +644,7 @@ class MobileJknService
                 'status_code' => 500
             ];
         }
-        
+
         try {
             // Validate taskid
             if (!in_array($taskid, [1, 2, 3, 4, 5, 6, 7, 99])) {
@@ -663,10 +662,10 @@ class MobileJknService
 
             // Get service date for boundary validation
             $serviceDate = $this->getServiceDate($kodebooking);
-            
+
             // Convert waktu to int for processing
             $waktuInt = (int)$waktu;
-            
+
             // Validate waktu is reasonable (not corrupted negative values or extremely old times)
             if ($waktuInt < 0 || $waktuInt < 1609459200000) { // Before Jan 1, 2021
                 Log::warning('Invalid waktu value detected, using current time within service date', [
@@ -674,7 +673,7 @@ class MobileJknService
                     'taskid' => $taskid,
                     'invalid_waktu' => $waktuInt
                 ]);
-                
+
                 // Use current time if within service date, otherwise use end of service date
                 if ($serviceDate) {
                     $now = Carbon::now('Asia/Jakarta')->timestamp * 1000;
@@ -684,12 +683,12 @@ class MobileJknService
                     $waktuInt = (int)(Carbon::now('Asia/Jakarta')->timestamp * 1000);
                 }
             }
-            
+
             // Ensure time is within service date first
             if ($serviceDate) {
                 $waktuInt = $this->ensureTimeWithinServiceDate($waktuInt, $serviceDate);
             }
-            
+
             // Check if we need to adjust the time to be after the previous task
             $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
             if ($previousWaktu !== null && $previousWaktu > 0) {
@@ -720,13 +719,10 @@ class MobileJknService
             ]);
 
             $batal = '';
-            // if ($taskid == 99) {
-            //     $refBatal = ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
-            //     $batal = $this->batalAntrean($kodebooking, $refBatal ? $refBatal->keterangan : 'Batal.');
-            // }
+            // batalAntrean is called explicitly by controller or command, no need to duplicate here
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'X-cons-id' => $this->consId,
                 'X-timestamp' => $timestamp,
@@ -753,7 +749,7 @@ class MobileJknService
             ]);
 
             $metaMessage = $responseData['metadata']['message'] ?? ($responseData['metadata'] ?? null);
-            
+
             // Handle "time cannot be less than or equal to previous time" error or "time is greater than current task" error
             if (is_string($metaMessage) && (
                 strpos($metaMessage, 'tidak boleh kurang atau sama dengan waktu sebelumnya') !== false ||
@@ -766,11 +762,11 @@ class MobileJknService
                     'current_waktu' => $waktuInt,
                     'error' => $metaMessage
                 ]);
-                
+
                 // Hit list task API to get the exact time registered in BPJS server
                 $listTaskResult = $this->getListTask($kodebooking);
                 $bestWaktuObj = null;
-                
+
                 if ($listTaskResult['success'] && is_array($listTaskResult['data'])) {
                     // Find actual previous task time registered in BPJS
                     $bpjsTasks = $listTaskResult['data'];
@@ -782,15 +778,15 @@ class MobileJknService
                         }
                     }
                 }
-                
+
                 $previousWaktu = null;
-                
+
                 if ($bestWaktuObj !== null && isset($bestWaktuObj['waktu'])) {
                     // Extracting the timestamp string correctly
                     // Format returned by BPJS is "DD-MM-YYYY HH:mm:ss WIB" for time
                     try {
                         $timeString = str_replace(' WIB', '', $bestWaktuObj['waktu']);
-                        $time = \Carbon\Carbon::createFromFormat('d-m-Y H:i:s', $timeString, 'Asia/Jakarta');
+                        $time = Carbon::createFromFormat('d-m-Y H:i:s', $timeString, 'Asia/Jakarta');
                         $previousWaktu = $time->timestamp * 1000;
                         Log::info('Found previous task time natively via BPJS getListTask', [
                             'kodebooking' => $kodebooking,
@@ -798,7 +794,7 @@ class MobileJknService
                             'bpjs_waktu_str' => $bestWaktuObj['waktu'],
                             'parsed_timestamp_ms' => $previousWaktu
                         ]);
-                    } catch (\Exception $e) {
+                    } catch (Exception $e) {
                          Log::error("Failed to parse BPJS returned time", ['error' => $e->getMessage()]);
                     }
                 }
@@ -808,7 +804,7 @@ class MobileJknService
                     try {
                         $timeString = str_replace([' WIB', ' WITA', ' WIT'], '', $matches[1]);
                         // Example: 2026-03-17 15:39:34
-                        $time = \Carbon\Carbon::parse($timeString, 'Asia/Jakarta');
+                        $time = Carbon::parse($timeString, 'Asia/Jakarta');
                         $msgWaktu = $time->timestamp * 1000;
                         if ($previousWaktu === null || $msgWaktu > $previousWaktu) {
                             $previousWaktu = $msgWaktu;
@@ -817,16 +813,16 @@ class MobileJknService
                                 'new_previous_waktu' => $previousWaktu
                             ]);
                         }
-                    } catch (\Exception $e) {
+                    } catch (Exception $e) {
                         Log::debug('Failed to parse time from error message', ['error' => $e->getMessage()]);
                     }
                 }
-                
+
                 // Fallback to internal tracker if API request/parsing failed
                 if ($previousWaktu === null) {
                     $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
                 }
-                
+
                 // Fallback if previous task not in local DB
                 if ($previousWaktu === null) {
                     $prevDbTime = $this->getTaskTimestampFromDatabase($kodebooking, $taskid - 1);
@@ -834,7 +830,7 @@ class MobileJknService
                         $previousWaktu = (int)$prevDbTime;
                     }
                 }
-                
+
                 if ($previousWaktu !== null) {
                     try {
                         $offsetMinutes = random_int(5, 10);
@@ -842,21 +838,21 @@ class MobileJknService
                         $offsetMinutes = rand(5, 10);
                     }
                     $adjustedWaktu = $previousWaktu + ($offsetMinutes * 60 * 1000);
-                    
+
                     Log::info('Retrying with adjusted time', [
                         'previous_waktu' => $previousWaktu,
                         'adjusted_waktu' => $adjustedWaktu
                     ]);
-                    
+
                     // Recursive call with adjusted time, passing the BPJS error message
                     $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1, $metaMessage);
-                    
+
                     // If retry succeeds, save the adjusted time to database
                     if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
                         try {
                             $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
                             $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
-                            
+
                             ReferensiMobilejknBpjsTaskid::updateOrCreate(
                                 [
                                     'no_rawat' => $noRawat,
@@ -866,7 +862,7 @@ class MobileJknService
                                     'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                                 ]
                             );
-                            
+
                             Log::info('Updated task ID with adjusted time in database', [
                                 'no_rawat' => $noRawat,
                                 'taskid' => $taskid,
@@ -879,11 +875,11 @@ class MobileJknService
                             ]);
                         }
                     }
-                    
+
                     return $retryResult;
                 }
             }
-            
+
             // Handle "Waktu tidak valid" error (time outside service date)
             if (is_string($metaMessage) && strpos($metaMessage, 'Waktu tidak valid') !== false) {
                 Log::warning('Service date validation error, attempting to adjust time based on BPJS error', [
@@ -892,7 +888,7 @@ class MobileJknService
                     'current_waktu' => $waktuInt,
                     'error' => $metaMessage
                 ]);
-                
+
                 // Try to extract expected service date from error message
                 $expectedDateStr = null;
                 if (preg_match('/Tanggal pelayanan untuk Kode Booking tersebut adalah \((.*?)\)/', $metaMessage, $matches)) {
@@ -900,14 +896,14 @@ class MobileJknService
                 }
 
                 $adjustedWaktu = null;
-                
+
                 if ($expectedDateStr) {
                     try {
                         $expectedDate = Carbon::parse($expectedDateStr, 'Asia/Jakarta');
-                        
+
                         // For any task, try to get previous task's time on this correct date
                         $previousWaktu = $this->getPreviousTaskTime($kodebooking, $taskid);
-                        
+
                         // Fallback if previous task not in local DB
                         if ($previousWaktu === null) {
                             $prevDbTime = $this->getTaskTimestampFromDatabase($kodebooking, $taskid - 1);
@@ -915,7 +911,7 @@ class MobileJknService
                                 $previousWaktu = (int)$prevDbTime;
                             }
                         }
-                        
+
                         if ($previousWaktu !== null) {
                             // If previous task exists, just add 5-10 minutes to it
                             try {
@@ -924,7 +920,7 @@ class MobileJknService
                                 $offsetMinutes = rand(5, 10);
                             }
                             $prevTime = Carbon::createFromTimestampMs($previousWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'));
-                            
+
                             // Only use previous time if it's on the expected date
                             if ($prevTime->toDateString() === $expectedDate->toDateString()) {
                                 $adjustedWaktu = (int)($prevTime->copy()->addMinutes($offsetMinutes)->timestamp * 1000);
@@ -937,17 +933,17 @@ class MobileJknService
                             // e.g. 08:00 AM + random offset based on task id
                             $adjustedWaktu = (int)($expectedDate->copy()->setTime(8 + $taskid, rand(0, 59), rand(0, 59))->timestamp * 1000);
                         }
-                        
+
                         Log::info('Adjusting waktu based on exact BPJS expected date', [
                             'expected_date' => $expectedDateStr,
                             'new_waktu' => $adjustedWaktu,
                             'new_time' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                         ]);
-                    } catch (\Exception $e) {
+                    } catch (Exception $e) {
                         Log::error('Failed to parse date from BPJS error message', ['error' => $e->getMessage()]);
                     }
                 }
-                
+
                 // If we couldn't adjust based on message date, fallback to capping to our known service date
                 if ($adjustedWaktu === null && $serviceDate) {
                     $localTz = config('app.timezone', 'Asia/Jakarta');
@@ -959,17 +955,17 @@ class MobileJknService
                         'capped_time' => $cappedTime->toDateTimeString()
                     ]);
                 }
-                
+
                 if ($adjustedWaktu !== null) {
                     // Recursive call with adjusted time, passing the BPJS error message
                     $retryResult = $this->updateTaskId($kodebooking, $taskid, (string)$adjustedWaktu, $retryCount + 1, $metaMessage);
-                    
+
                     // If retry succeeds, save the adjusted time to database
                     if ($retryResult['success'] || (isset($retryResult['data']['metadata']['message']) && strpos($retryResult['data']['metadata']['message'], 'sudah ada') !== false)) {
                         try {
                             $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
                             $noRawat = $referensi ? $referensi->no_rawat : $kodebooking;
-                            
+
                             ReferensiMobilejknBpjsTaskid::updateOrCreate(
                                 [
                                     'no_rawat' => $noRawat,
@@ -979,7 +975,7 @@ class MobileJknService
                                     'waktu' => Carbon::createFromTimestampMs($adjustedWaktu)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toDateTimeString()
                                 ]
                             );
-                            
+
                             Log::info('Updated task ID with adjusted time in database after BPJS date correction', [
                                 'no_rawat' => $noRawat,
                                 'taskid' => $taskid,
@@ -992,7 +988,7 @@ class MobileJknService
                             ]);
                         }
                     }
-                    
+
                     return $retryResult;
                 }
             }
@@ -1155,14 +1151,14 @@ class MobileJknService
         try {
             // Extract the no_rawat/kodebooking from the payload
             $noRawat = $patientData['nobooking'] ?? $patientData['kodebooking'] ?? null;
-            
+
             if (empty($noRawat)) {
                 throw new InvalidArgumentException('No rawat/kodebooking is required');
             }
-            
+
             // Call sendAddAntreanByNoRawat instead of direct API call
             $result = $this->sendAddAntreanByNoRawat($noRawat);
-            
+
             // Map the response structure to match the original addAntrean format
             return [
                 'success' => $result['status'] ?? false,
@@ -1170,7 +1166,7 @@ class MobileJknService
                 'data' => $result['bpjs']['data'] ?? [],
                 'metadata' => $result['bpjs']['metadata'] ?? null
             ];
-            
+
         } catch (Exception $e) {
             Log::error('Mobile JKN Add Antrean Error', [
                 'kodebooking' => $patientData['nobooking'] ?? $patientData['kodebooking'] ?? 'unknown',
@@ -1195,7 +1191,7 @@ class MobileJknService
         // Return current Unix timestamp in seconds as string (used for X-timestamp header)
         return strval(time());
     }
-    
+
     /**
      * Get patient data needed for task ID updates
      *
@@ -1207,23 +1203,23 @@ class MobileJknService
         try {
             // Get registration data
             $regPeriksa = RegPeriksa::where('no_rawat', $regNo)->first();
-            
+
             if (!$regPeriksa) {
                 Log::error('Registration not found: ' . $regNo);
                 // return null;
             }
-            
+
             // Get doctor information
             $dokter = PemeriksaanRalan::where('no_rawat', $regNo)->where('nip', $regPeriksa->kd_dokter)->first();
 
             // Get referral data from BPJS
             $referral = ReferensiMobilejknBpjs::where('no_rawat', $regNo)->first();
-            
+
             if (!$referral) {
                 Log::error('BPJS referral not found for: ' . $regNo);
                 // return null;
             }
-            
+
             // Get examination data
             $pemeriksaan = PemeriksaanRalan::where('no_rawat', $regNo)->join('petugas', 'petugas.nip', '=', 'pemeriksaan_ralan.nip')->first();
 
@@ -1247,7 +1243,7 @@ class MobileJknService
                 ],
                 'kodebooking' => $kode
             ];
-            
+
         } catch (Exception $e) {
             Log::error('Error retrieving patient data for task ID: ' . $e->getMessage());
             return null;
@@ -1257,13 +1253,53 @@ class MobileJknService
     /**
      * Get saved task ID record from referensi_mobilejkn_bpjs_taskid by no_rawat and taskid
      *
-     * @param string $noRawat
-     * @param int $taskid
+     * @param string $kodebooking
      * @return array|null
      */
     public function getListTask(string $kodebooking): array
     {
         try {
+            $cached = BpjsPatientVisit::where('kodebooking', $kodebooking)->first();
+
+            $shouldUseCache = false;
+            if ($cached && $cached->task_data !== null) {
+                $reg = null;
+                if (strpos($kodebooking, '/') !== false) {
+                    $reg = RegPeriksa::where('no_rawat', $kodebooking)->first();
+                } else {
+                    $ref = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                    if ($ref) {
+                        $reg = RegPeriksa::where('no_rawat', $ref->no_rawat)->first();
+                    }
+                }
+
+                $hasTask7 = false;
+                if (is_array($cached->task_data)) {
+                    foreach ($cached->task_data as $task) {
+                        if (isset($task['taskid']) && $task['taskid'] == 7) {
+                            $hasTask7 = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($hasTask7 || ($cached->last_sync && $cached->last_sync->gt(now()->subMinutes(15)))) {
+                    $shouldUseCache = true;
+                }
+            }
+
+            if ($shouldUseCache) {
+                return [
+                    'success' => true,
+                    'data' => $cached->task_data ?? [],
+                    'metadata' => [
+                        'code' => 200,
+                        'message' => 'Success (Loaded from DB Cache)'
+                    ],
+                    'status_code' => 200
+                ];
+            }
+
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
 
@@ -1282,11 +1318,11 @@ class MobileJknService
                 'X-timestamp' => $timestamp,
                 'X-signature' => $signature,
                 'user_key' => $this->userKey,
-            ])->post($this->baseUrl . '/antrean/getlisttask', $requestData);
+            ])->timeout(5)->connectTimeout(3)->post($this->baseUrl . '/antrean/getlisttask', $requestData);
 
             $responseData = $response->json();
 
-            // Log to BPJS log database
+            // Log to BPJS log database (Temporarily disabled for monitoring to prevent flooding bpjs_ws_rs_log)
             $this->bpjsLogService->logRequest(
                 $response->status(),
                 json_encode($requestData),
@@ -1301,21 +1337,68 @@ class MobileJknService
             ]);
 
             $data = [];
-            if ($response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200 && isset($responseData['response'])) {
-                $key = $this->generateDecryptionKey((string) $timestamp);
-                $decrypted = $this->stringDecrypt($key, $responseData['response']);
-                $decompressed = $this->decompress($decrypted);
-                $data = json_decode($decompressed, true) ?? [];
+            $metaCode = 200;
+            $metaMsg = 'OK';
+
+            if ($response->status() == 200 && isset($responseData['metadata']['code'])) {
+                $metaCode = (int)$responseData['metadata']['code'];
+                $metaMsg = $responseData['metadata']['message'] ?? 'OK';
+
+                if ($metaCode == 200 && isset($responseData['response'])) {
+                    if (is_string($responseData['response'])) {
+                        $key = $this->generateDecryptionKey((string) $timestamp);
+                        $decrypted = $this->stringDecrypt($key, $responseData['response']);
+                        $decompressed = $this->decompress($decrypted);
+                        $data = json_decode($decompressed, true) ?? [];
+                    } else {
+                        $data = $responseData['response'];
+                    }
+                }
+            } else {
+                $metaCode = $response->status();
+                $metaMsg = $response->reason() ?: 'API Error';
+            }
+
+            $success = in_array($metaCode, [200, 201, 204]);
+            if ($success) {
+                if ($cached) {
+                    $cached->update([
+                        'task_data' => $data,
+                        'last_sync' => now()
+                    ]);
+                } else {
+                    $reg = null;
+                    if (strpos($kodebooking, '/') !== false) {
+                        $reg = RegPeriksa::where('no_rawat', $kodebooking)->first();
+                    } else {
+                        $ref = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                        if ($ref) {
+                            $reg = RegPeriksa::where('no_rawat', $ref->no_rawat)->first();
+                        }
+                    }
+                    if ($reg) {
+                        BpjsPatientVisit::create([
+                            'kodebooking' => $kodebooking,
+                            'no_rawat' => $reg->no_rawat,
+                            'tanggalperiksa' => $reg->tgl_registrasi,
+                            'task_data' => $data,
+                            'last_sync' => now()
+                        ]);
+                    }
+                }
             }
 
             return [
-                'success' => $response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200,
+                'success' => $success,
                 'data' => $data,
-                'metadata' => $responseData['metadata'] ?? [],
+                'metadata' => [
+                    'code' => $metaCode,
+                    'message' => $metaMsg
+                ],
                 'status_code' => $response->status()
             ];
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error('Error getting list task from Mobile JKN', [
                 'kodebooking' => $kodebooking,
                 'error' => $e->getMessage()
@@ -1329,7 +1412,134 @@ class MobileJknService
         }
     }
 
-    public function getTaskIdRecord(string $noRawat, int $taskid = null): ?array
+    /**
+     * Get listtask directly from BPJS API by kodebooking (bypassing DB cache check)
+     *
+     * @param string $kodebooking
+     * @return array
+     */
+    public function getListTaskDirect(string $kodebooking): array
+    {
+        try {
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+
+            $requestData = [
+                'kodebooking' => $kodebooking
+            ];
+
+            Log::info('Mobile JKN Get List Task Direct Request', [
+                'kodebooking' => $kodebooking,
+                'timestamp' => (int) $timestamp
+            ]);
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'X-cons-id' => $this->consId,
+                'X-timestamp' => $timestamp,
+                'X-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->timeout(5)->connectTimeout(3)->post($this->baseUrl . '/antrean/getlisttask', $requestData);
+
+            $responseData = $response->json();
+
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode($requestData),
+                json_encode($responseData),
+                $this->baseUrl . '/antrean/getlisttask',
+                'POST'
+            );
+
+            Log::info('Mobile JKN Get List Task Direct Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            $data = [];
+            $metaCode = 200;
+            $metaMsg = 'OK';
+
+            if ($response->status() == 200 && isset($responseData['metadata']['code'])) {
+                $metaCode = (int)$responseData['metadata']['code'];
+                $metaMsg = $responseData['metadata']['message'] ?? 'OK';
+
+                if ($metaCode == 200 && isset($responseData['response'])) {
+                    if (is_string($responseData['response'])) {
+                        $key = $this->generateDecryptionKey((string) $timestamp);
+                        $decrypted = $this->stringDecrypt($key, $responseData['response']);
+                        $decompressed = $this->decompress($decrypted);
+                        $data = json_decode($decompressed, true) ?? [];
+                    } else {
+                        $data = $responseData['response'];
+                    }
+                }
+            } else {
+                $metaCode = $response->status();
+                $metaMsg = $response->reason() ?: 'API Error';
+            }
+
+            $success = in_array($metaCode, [200, 201, 204]);
+
+            // Update cache record in DB upon successful direct fetch
+            if ($success) {
+                $cached = BpjsPatientVisit::where('kodebooking', $kodebooking)->first();
+                if ($cached) {
+                    $cached->update([
+                        'task_data' => $data,
+                        'last_sync' => now()
+                    ]);
+                } else {
+                    $reg = null;
+                    if (strpos($kodebooking, '/') !== false) {
+                        $reg = RegPeriksa::where('no_rawat', $kodebooking)->first();
+                    } else {
+                        $ref = ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+                        if ($ref) {
+                            $reg = RegPeriksa::where('no_rawat', $ref->no_rawat)->first();
+                        }
+                    }
+                    if ($reg) {
+                        BpjsPatientVisit::create([
+                            'kodebooking' => $kodebooking,
+                            'no_rawat' => $reg->no_rawat,
+                            'tanggalperiksa' => $reg->tgl_registrasi,
+                            'task_data' => $data,
+                            'last_sync' => now()
+                        ]);
+                    }
+                }
+            }
+
+            return [
+                'success' => $success,
+                'data' => $data,
+                'metadata' => [
+                    'code' => $metaCode,
+                    'message' => $metaMsg
+                ],
+                'status_code' => $response->status()
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error getting list task direct from Mobile JKN', [
+                'kodebooking' => $kodebooking,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'metadata' => [
+                    'code' => 500,
+                    'message' => $e->getMessage()
+                ],
+                'status_code' => 500
+            ];
+        }
+    }
+
+    public function getTaskIdRecord(string $noRawat, ?int $taskid = null): ?array
     {
         try {
             $record = ReferensiMobilejknBpjsTaskid::where('no_rawat', $noRawat);
@@ -1472,6 +1682,7 @@ class MobileJknService
             // Make the actual BPJS API call
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
+
 
             // Log the request
             Log::info('Mobile JKN Add Antrean Request', [
@@ -1651,26 +1862,26 @@ class MobileJknService
                 // Response may contain 'response' as an object/array or a JSON string
                 if (isset($responseData['response'])) {
                     $respContent = $responseData['response'];
-                    
+
                     // Handle encrypted response
                     if (is_string($respContent)) {
                         try {
                             // Generate decryption key using consid + secretkey + timestamp
                             $decryptionKey = $this->generateDecryptionKey($timestamp);
-                            
+
                             // Decrypt response using our generated key
                             $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
-                            
+
                             // Decompress if needed
                             if ($decryptedResponse) {
                                 $decompressedResponse = $this->decompress($decryptedResponse);
                                 $decoded = json_decode($decompressedResponse, true);
-                                
+
                                 Log::info('Decrypted rujukan response', [
                                     'decrypted' => substr($decryptedResponse, 0, 100) . '...',
                                     'decompressed' => substr($decompressedResponse, 0, 100) . '...'
                                 ]);
-                                
+
                                 if (is_array($decoded) && isset($decoded['rujukan'])) {
                                     $rujukanList = $decoded['rujukan'];
                                 }
@@ -1753,26 +1964,26 @@ class MobileJknService
 
                 if (isset($responseData['response'])) {
                     $respContent = $responseData['response'];
-                    
+
                     // Handle encrypted response
                     if (is_string($respContent)) {
                         try {
                             // Generate decryption key using consid + secretkey + timestamp
                             $decryptionKey = $this->generateDecryptionKey($timestamp);
-                            
+
                             // Decrypt response using our generated key
                             $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
-                            
+
                             // Decompress if needed
                             if ($decryptedResponse) {
                                 $decompressedResponse = $this->decompress($decryptedResponse);
                                 $decoded = json_decode($decompressedResponse, true);
-                                
+
                                 Log::info('Decrypted rujukan RS response', [
                                     'decrypted' => substr($decryptedResponse, 0, 100) . '...',
                                     'decompressed' => substr($decompressedResponse, 0, 100) . '...'
                                 ]);
-                                
+
                                 if (is_array($decoded) && isset($decoded['rujukan'])) {
                                     $rujukanList = $decoded['rujukan'];
                                 }
@@ -1857,26 +2068,26 @@ class MobileJknService
             if ($code === '200' || $code === 200) {
                 $respContent = $responseData['response'] ?? null;
                 $list = null;
-                
+
                 // Handle encrypted response
                 if (is_string($respContent)) {
                     try {
                         // Generate decryption key using consid + secretkey + timestamp
                         $decryptionKey = $this->generateDecryptionKey($timestamp);
-                        
+
                         // Decrypt response using our generated key
                         $decryptedResponse = $this->stringDecrypt($decryptionKey, $respContent);
-                        
+
                         // Decompress if needed
                         if ($decryptedResponse) {
                             $decompressedResponse = $this->decompress($decryptedResponse);
                             $decoded = json_decode($decompressedResponse, true);
-                            
+
                             Log::info('Decrypted kontrol response', [
                                 'decrypted' => substr($decryptedResponse, 0, 100) . '...',
                                 'decompressed' => substr($decompressedResponse, 0, 100) . '...'
                             ]);
-                            
+
                             if (is_array($decoded) && isset($decoded['list'])) {
                                 $list = $decoded['list'];
                             }
@@ -1911,7 +2122,7 @@ class MobileJknService
 
     /**
      * Cancel an appointment in Mobile JKN API
-     * 
+     *
      * @param string $kodeBooking Registration code / booking code
      * @param string $keterangan Reason for cancellation
      * @return array
@@ -1927,7 +2138,7 @@ class MobileJknService
             if (empty($keterangan)) {
                 $keterangan = 'Pembatalan antrean oleh pasien/RS';
             }
-            
+
             // Generate timestamp and signature
             $timestamp = $this->getUtcTimestamp();
             $signature = base64_encode($this->generateSignature($timestamp));
@@ -1946,7 +2157,7 @@ class MobileJknService
             ]);
 
             // Make HTTP request
-            $response = Http::withHeaders([
+            $response = Http::retry(3, 100)->withHeaders([
                 'Content-Type' => 'application/json',
                 'x-cons-id' => $this->consId,
                 'x-timestamp' => $timestamp,
@@ -1972,36 +2183,39 @@ class MobileJknService
                 'response' => $responseData
             ]);
 
-            // If successful, save cancellation to local DB
-            // if ($response->successful()) {
-            //     try {
-            //         // Get registration data
-            //         $regPeriksa = RegPeriksa::where('no_rawat', $kodeBooking)->first();
-                    
-            //         // If not found as no_rawat, try finding via BPJS referral table
-            //         if (!$regPeriksa) {
-            //             $referensi = ReferensiMobilejknBpjs::where('nobooking', $kodeBooking)->first();
-            //             if ($referensi) {
-            //                 $regPeriksa = RegPeriksa::where('no_rawat', $referensi->no_rawat)->first();
-            //             }
-            //         }
+            // Update local DB status upon cancellation
+            try {
+                $ref = ReferensiMobilejknBpjs::where('nobooking', $kodeBooking)->first();
+                $noRawat = $ref ? $ref->no_rawat : $kodeBooking;
+                $reg = RegPeriksa::where('no_rawat', $noRawat)->first();
 
-            //         // Save cancellation record if reg data found
-            //         if ($regPeriksa) {
-            //             $batalRecord = new ReferensiMobilejknBpjsBatal([
-            //                 'no_rawat' => $regPeriksa->no_rawat,
-            //                 'nobooking' => $kodeBooking,
-            //                 'status' => 'Batal',
-            //                 'keterangan' => $keterangan,
-            //                 'response' => json_encode($responseData),
-            //                 'tanggal' => now()
-            //             ]);
-            //             $batalRecord->save();
-            //         }
-            //     } catch (Throwable $e) {
-            //         Log::error('Failed to save ReferensiMobilejknBpjsBatal', ['error' => $e->getMessage(), 'kodebooking' => $kodeBooking]);
-            //     }
-            // }
+                if ($ref) {
+                    $ref->update([
+                        'status' => 'Batal',
+                        'validasi' => now(),
+                        'statuskirim' => 'Sudah',
+                    ]);
+                }
+
+                \App\Models\ReferensiMobilejknBpjsBatal::updateOrCreate(
+                    ['nobooking' => $kodeBooking],
+                    [
+                        'no_rkm_medis' => $reg->no_rkm_medis ?? ($ref->norm ?? ''),
+                        'no_rawat_batal' => $noRawat,
+                        'nomorreferensi' => $ref->nomorreferensi ?? '',
+                        'tanggalbatal' => now(),
+                        'keterangan' => $keterangan,
+                        'statuskirim' => 'Sudah',
+                    ]
+                );
+
+                BpjsPatientVisit::where('kodebooking', $kodeBooking)->update([
+                    'status' => 'Batal',
+                    'last_sync' => now()
+                ]);
+            } catch (Throwable $e) {
+                Log::error('Failed to update local DB on cancellation', ['error' => $e->getMessage(), 'kodebooking' => $kodeBooking]);
+            }
 
             return [
                 'success' => $response->successful(),
@@ -2036,7 +2250,7 @@ class MobileJknService
     /**
      * Wrapper method to cancel an appointment by No. Rawat
      * Handles finding the correct BPJS booking code
-     * 
+     *
      * @param string $noRawat Hospital registration number
      * @param string $keterangan Reason for cancellation
      * @return array
@@ -2046,26 +2260,419 @@ class MobileJknService
         try {
             // Find BPJS booking code
             $referensi = ReferensiMobilejknBpjs::where('no_rawat', $noRawat)->first();
-            
+
             // If found in referensi table, use nobooking
             if ($referensi && $referensi->nobooking) {
-                return $this->batalAntrean($referensi->nobooking, $keterangan);
+                $result = $this->batalAntrean($referensi->nobooking, $keterangan);
+                $nowStr = (string)(now()->timestamp * 1000);
+                $this->updateTaskId($referensi->nobooking, 99, $nowStr);
+                return $result;
             }
-            
+
             // Otherwise use no_rawat as the booking code
-            return $this->batalAntrean($noRawat, $keterangan);
-            
+            $result = $this->batalAntrean($noRawat, $keterangan);
+            $nowStr = (string)(now()->timestamp * 1000);
+            $this->updateTaskId($noRawat, 99, $nowStr);
+            return $result;
+
         } catch (Exception $e) {
             Log::error('Error canceling appointment by no_rawat', [
                 'no_rawat' => $noRawat,
                 'error' => $e->getMessage()
             ]);
-            
+
             return [
                 'success' => false,
                 'error' => $e->getMessage(),
                 'status_code' => 500
             ];
         }
+    }
+
+    /**
+     * Get official dashboard queue performance from BPJS by date
+     *
+     * @param string $tanggal Format YYYY-MM-DD
+     * @param string $waktu Waktu server ('rs' or 'server')
+     * @return array
+     */
+    public function getDashboardPerTanggal(string $tanggal, string $waktu = 'rs'): array
+    {
+        try {
+            $cached = BpjsDashboardWaktutunggu::where('tanggal', $tanggal)
+                ->where('waktu', $waktu)
+                ->get();
+
+            $isToday = $tanggal === date('Y-m-d');
+            $isCacheValid = false;
+
+            if ($cached->isNotEmpty()) {
+                if (!$isToday) {
+                    $isCacheValid = true;
+                } else {
+                    $lastUpdated = $cached->max('updated_at');
+                    if ($lastUpdated && Carbon::parse($lastUpdated)->gt(now()->subMinutes(10))) {
+                        $isCacheValid = true;
+                    }
+                }
+            }
+
+            if ($isCacheValid) {
+                $list = [];
+                foreach ($cached as $item) {
+                    $list[] = [
+                        'tanggal' => $item->tanggal,
+                        'kodepoli' => $item->kodepoli,
+                        'namapoli' => $item->namapoli,
+                        'jumlah_antrean' => $item->jumlah_antrean,
+                        'waktu_task1' => $item->waktu_task1,
+                        'waktu_task2' => $item->waktu_task2,
+                        'waktu_task3' => $item->waktu_task3,
+                        'waktu_task4' => $item->waktu_task4,
+                        'waktu_task5' => $item->waktu_task5,
+                        'waktu_task6' => $item->waktu_task6,
+                        'avg_waktu_task1' => $item->avg_waktu_task1,
+                        'avg_waktu_task2' => $item->avg_waktu_task2,
+                        'avg_waktu_task3' => $item->avg_waktu_task3,
+                        'avg_waktu_task4' => $item->avg_waktu_task4,
+                        'avg_waktu_task5' => $item->avg_waktu_task5,
+                        'avg_waktu_task6' => $item->avg_waktu_task6,
+                        'insertdate' => $item->insertdate,
+                    ];
+                }
+                return [
+                    'success' => true,
+                    'data' => ['list' => $list],
+                    'metadata' => [
+                        'code' => 200,
+                        'message' => 'Success (Loaded from DB Cache)'
+                    ],
+                    'status_code' => 200
+                ];
+            }
+
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+            $url = $this->baseUrl . "/dashboard/waktutunggu/tanggal/{$tanggal}/waktu/{$waktu}";
+
+            Log::info('Mobile JKN Get Dashboard Per Tanggal Request', [
+                'tanggal' => $tanggal,
+                'waktu' => $waktu,
+                'timestamp' => (int) $timestamp
+            ]);
+
+            $response = Http::withHeaders([
+                'X-cons-id' => $this->consId,
+                'X-timestamp' => $timestamp,
+                'X-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->get($url);
+
+            $responseData = $response->json();
+
+            // Log to BPJS log database
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode(['tanggal' => $tanggal, 'waktu' => $waktu]),
+                json_encode($responseData),
+                $url,
+                'GET'
+            );
+
+            Log::info('Mobile JKN Get Dashboard Per Tanggal Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            $data = [];
+            if ($response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200 && isset($responseData['response'])) {
+                if (is_string($responseData['response'])) {
+                    $key = $this->generateDecryptionKey((string) $timestamp);
+                    $decrypted = $this->stringDecrypt($key, $responseData['response']);
+                    $decompressed = $this->decompress($decrypted);
+                    $data = json_decode($decompressed, true) ?? [];
+                } else {
+                    $data = $responseData['response'];
+                }
+
+                if (isset($data['list']) && is_array($data['list'])) {
+                    foreach ($data['list'] as $item) {
+                        BpjsDashboardWaktutunggu::updateOrCreate(
+                            [
+                                'tanggal' => $tanggal,
+                                'waktu' => $waktu,
+                                'kodepoli' => $item['kodepoli'],
+                            ],
+                            [
+                                'namapoli' => $item['namapoli'] ?? null,
+                                'jumlah_antrean' => $item['jumlah_antrean'] ?? 0,
+                                'waktu_task1' => $item['waktu_task1'] ?? 0,
+                                'waktu_task2' => $item['waktu_task2'] ?? 0,
+                                'waktu_task3' => $item['waktu_task3'] ?? 0,
+                                'waktu_task4' => $item['waktu_task4'] ?? 0,
+                                'waktu_task5' => $item['waktu_task5'] ?? 0,
+                                'waktu_task6' => $item['waktu_task6'] ?? 0,
+                                'avg_waktu_task1' => $item['avg_waktu_task1'] ?? 0,
+                                'avg_waktu_task2' => $item['avg_waktu_task2'] ?? 0,
+                                'avg_waktu_task3' => $item['avg_waktu_task3'] ?? 0,
+                                'avg_waktu_task4' => $item['avg_waktu_task4'] ?? 0,
+                                'avg_waktu_task5' => $item['avg_waktu_task5'] ?? 0,
+                                'avg_waktu_task6' => $item['avg_waktu_task6'] ?? 0,
+                                'insertdate' => $item['insertdate'] ?? null,
+                            ]
+                        );
+                    }
+                }
+            }
+
+            return [
+                'success' => $response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200,
+                'data' => $data,
+                'metadata' => $responseData['metadata'] ?? [],
+                'status_code' => $response->status()
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error getting dashboard per tanggal from Mobile JKN', [
+                'tanggal' => $tanggal,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'status_code' => 500
+            ];
+        }
+    }
+
+    /**
+     * Get official dashboard queue performance from BPJS by month and year
+     *
+     * @param string $bulan Format MM (e.g. 01-12)
+     * @param string $tahun Format YYYY
+     * @param string $waktu Waktu server ('rs' or 'server')
+     * @return array
+     */
+    public function getDashboardPerBulan(string $bulan, string $tahun, string $waktu = 'rs'): array
+    {
+        try {
+            $startOfMonth = "{$tahun}-{$bulan}-01";
+            $endOfMonth = date('Y-m-t', strtotime($startOfMonth));
+
+            $cached = BpjsDashboardWaktutunggu::whereBetween('tanggal', [$startOfMonth, $endOfMonth])
+                ->where('waktu', $waktu)
+                ->get();
+
+            $isCurrentMonth = ($bulan === date('m') && $tahun === date('Y'));
+            $isCacheValid = false;
+
+            if ($cached->isNotEmpty()) {
+                if (!$isCurrentMonth) {
+                    $isCacheValid = true;
+                } else {
+                    $lastUpdated = $cached->max('updated_at');
+                    if ($lastUpdated && Carbon::parse($lastUpdated)->gt(now()->subHour())) {
+                        $isCacheValid = true;
+                    }
+                }
+            }
+
+            if ($isCacheValid) {
+                $list = [];
+                foreach ($cached as $item) {
+                    $list[] = [
+                        'tanggal' => $item->tanggal,
+                        'kodepoli' => $item->kodepoli,
+                        'namapoli' => $item->namapoli,
+                        'jumlah_antrean' => $item->jumlah_antrean,
+                        'waktu_task1' => $item->waktu_task1,
+                        'waktu_task2' => $item->waktu_task2,
+                        'waktu_task3' => $item->waktu_task3,
+                        'waktu_task4' => $item->waktu_task4,
+                        'waktu_task5' => $item->waktu_task5,
+                        'waktu_task6' => $item->waktu_task6,
+                        'avg_waktu_task1' => $item->avg_waktu_task1,
+                        'avg_waktu_task2' => $item->avg_waktu_task2,
+                        'avg_waktu_task3' => $item->avg_waktu_task3,
+                        'avg_waktu_task4' => $item->avg_waktu_task4,
+                        'avg_waktu_task5' => $item->avg_waktu_task5,
+                        'avg_waktu_task6' => $item->avg_waktu_task6,
+                        'insertdate' => $item->insertdate,
+                    ];
+                }
+                return [
+                    'success' => true,
+                    'data' => ['list' => $list],
+                    'metadata' => [
+                        'code' => 200,
+                        'message' => 'Success (Loaded from DB Cache)'
+                    ],
+                    'status_code' => 200
+                ];
+            }
+
+            $timestamp = $this->getUtcTimestamp();
+            $signature = base64_encode($this->generateSignature($timestamp));
+            $url = $this->baseUrl . "/dashboard/waktutunggu/bulan/{$bulan}/tahun/{$tahun}/waktu/{$waktu}";
+
+            Log::info('Mobile JKN Get Dashboard Per Bulan Request', [
+                'bulan' => $bulan,
+                'tahun' => $tahun,
+                'waktu' => $waktu,
+                'timestamp' => (int) $timestamp
+            ]);
+
+            $response = Http::withHeaders([
+                'X-cons-id' => $this->consId,
+                'X-timestamp' => $timestamp,
+                'X-signature' => $signature,
+                'user_key' => $this->userKey,
+            ])->get($url);
+
+            $responseData = $response->json();
+
+            // Log to BPJS log database
+            $this->bpjsLogService->logRequest(
+                $response->status(),
+                json_encode(['bulan' => $bulan, 'tahun' => $tahun, 'waktu' => $waktu]),
+                json_encode($responseData),
+                $url,
+                'GET'
+            );
+
+            Log::info('Mobile JKN Get Dashboard Per Bulan Response', [
+                'status' => $response->status(),
+                'response' => $responseData
+            ]);
+
+            $data = [];
+            if ($response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200 && isset($responseData['response'])) {
+                if (is_string($responseData['response'])) {
+                    $key = $this->generateDecryptionKey((string) $timestamp);
+                    $decrypted = $this->stringDecrypt($key, $responseData['response']);
+                    $decompressed = $this->decompress($decrypted);
+                    $data = json_decode($decompressed, true) ?? [];
+                } else {
+                    $data = $responseData['response'];
+                }
+
+                if (isset($data['list']) && is_array($data['list'])) {
+                    foreach ($data['list'] as $item) {
+                        $itemTanggal = $item['tanggal'] ?? null;
+                        if ($itemTanggal) {
+                            BpjsDashboardWaktutunggu::updateOrCreate(
+                                [
+                                    'tanggal' => $itemTanggal,
+                                    'waktu' => $waktu,
+                                    'kodepoli' => $item['kodepoli'],
+                                ],
+                                [
+                                    'namapoli' => $item['namapoli'] ?? null,
+                                    'jumlah_antrean' => $item['jumlah_antrean'] ?? 0,
+                                    'waktu_task1' => $item['waktu_task1'] ?? 0,
+                                    'waktu_task2' => $item['waktu_task2'] ?? 0,
+                                    'waktu_task3' => $item['waktu_task3'] ?? 0,
+                                    'waktu_task4' => $item['waktu_task4'] ?? 0,
+                                    'waktu_task5' => $item['waktu_task5'] ?? 0,
+                                    'waktu_task6' => $item['waktu_task6'] ?? 0,
+                                    'avg_waktu_task1' => $item['avg_waktu_task1'] ?? 0,
+                                    'avg_waktu_task2' => $item['avg_waktu_task2'] ?? 0,
+                                    'avg_waktu_task3' => $item['avg_waktu_task3'] ?? 0,
+                                    'avg_waktu_task4' => $item['avg_waktu_task4'] ?? 0,
+                                    'avg_waktu_task5' => $item['avg_waktu_task5'] ?? 0,
+                                    'avg_waktu_task6' => $item['avg_waktu_task6'] ?? 0,
+                                    'insertdate' => $item['insertdate'] ?? null,
+                                ]
+                            );
+                        }
+                    }
+                }
+            }
+
+            return [
+                'success' => $response->status() == 200 && isset($responseData['metadata']['code']) && $responseData['metadata']['code'] == 200,
+                'data' => $data,
+                'metadata' => $responseData['metadata'] ?? [],
+                'status_code' => $response->status()
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Error getting dashboard per bulan from Mobile JKN', [
+                'bulan' => $bulan,
+                'tahun' => $tahun,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'status_code' => 500
+            ];
+        }
+    }
+
+    /**
+     * Cancel antrean and update cancellation records status
+     *
+     * @param string|null $kodeBooking
+     * @param string|null $noRawat
+     * @param string $keterangan
+     * @return array
+     */
+    public function cancelAntreanAndReconcile(?string $kodeBooking, ?string $noRawat, string $keterangan = 'Dibatalkan Oleh Admin'): array
+    {
+        if ($kodeBooking) {
+            $result = $this->batalAntrean($kodeBooking, $keterangan);
+        } else {
+            $result = $this->batalAntreanByNoRawat($noRawat, $keterangan);
+        }
+        return $result;
+    }
+
+    /**
+     * Reconcile cancelled records with BPJS (sync cancel status)
+     *
+     * @param int $days
+     * @return array
+     */
+    public function reconcileCancellationsFromBpjs(int $days = 3): array
+    {
+        $dateLimit = now()->subDays($days)->toDateString();
+
+        $referensis = ReferensiMobilejknBpjs::where('status', 'Batal')
+            ->where('statuskirim', 'Belum')
+            ->whereDate('validasi', '>=', $dateLimit)
+            ->get();
+
+        $cancelledCount = 0;
+
+        foreach ($referensis as $ref) {
+            $res = $this->batalAntrean($ref->nobooking, 'Dibatalkan Oleh Admin');
+            if ($res['success'] ?? false || (isset($res['metadata']['code']) && $res['metadata']['code'] == 200)) {
+                $ref->update(['statuskirim' => 'Sudah']);
+                $cancelledCount++;
+            }
+        }
+
+        $batals = \App\Models\ReferensiMobilejknBpjsBatal::where('statuskirim', 'Belum')
+            ->whereDate('tanggalbatal', '>=', $dateLimit)
+            ->get();
+
+        foreach ($batals as $batal) {
+            $res = $this->batalAntrean($batal->nobooking, $batal->keterangan ?? 'Dibatalkan');
+            if ($res['success'] ?? false || (isset($res['metadata']['code']) && $res['metadata']['code'] == 200)) {
+                $batal->update(['statuskirim' => 'Sudah']);
+                $cancelledCount++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Manual reconciliation of cancellations completed.',
+            'stats' => [
+                'task_cancelled' => $cancelledCount
+            ]
+        ];
     }
 }

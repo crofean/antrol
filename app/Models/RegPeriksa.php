@@ -9,6 +9,7 @@ class RegPeriksa extends Model
 {
     use HasFactory;
 
+    protected $connection = 'mysql';
     protected $table = 'reg_periksa';
 
     protected $primaryKey = 'no_rawat';
@@ -99,11 +100,20 @@ class RegPeriksa extends Model
     }
 
     /**
-     * Get the referensiMobilejknBpjs for the RegPeriksa.
+     * Get active referensiMobilejknBpjs for the RegPeriksa (excluding Batal status).
      */
     public function referensiMobilejknBpjs()
     {
-        return $this->hasOne(ReferensiMobilejknBpjs::class, 'no_rawat', 'no_rawat');
+        return $this->hasOne(ReferensiMobilejknBpjs::class, 'no_rawat', 'no_rawat')
+            ->where('status', '!=', 'Batal');
+    }
+
+    /**
+     * Get all referensiMobilejknBpjs records for the RegPeriksa.
+     */
+    public function referensiMobilejknBpjsAll()
+    {
+        return $this->hasMany(ReferensiMobilejknBpjs::class, 'no_rawat', 'no_rawat');
     }
 
     /**
@@ -112,5 +122,21 @@ class RegPeriksa extends Model
     public function referensiMobilejknBpjsTaskid()
     {
         return $this->hasMany(ReferensiMobilejknBpjsTaskid::class, 'no_rawat', 'no_rawat');
+    }
+
+    /**
+     * Get the pemeriksaanRalan for the RegPeriksa.
+     */
+    public function pemeriksaanRalan()
+    {
+        return $this->hasMany(PemeriksaanRalan::class, 'no_rawat', 'no_rawat');
+    }
+
+    /**
+     * Get the resepObat for the RegPeriksa.
+     */
+    public function resepObat()
+    {
+        return $this->hasMany(ResepObat::class, 'no_rawat', 'no_rawat');
     }
 }

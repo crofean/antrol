@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Antrol System | Dashboard</title>
-    
+
     <!-- Google Fonts & Icons -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -63,22 +63,32 @@
                     </div>
                     <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Antrol System</span>
                 </div>
-                
+
                 <div class="flex items-center space-x-4">
                     <button onclick="document.documentElement.classList.toggle('dark')" class="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
                         <i class="fas fa-moon dark:hidden"></i>
                         <i class="fas fa-sun hidden dark:block text-amber-400"></i>
                     </button>
-                    @if (Route::has('login'))
+                    @if(session()->has('auth_user'))
                         <div class="hidden sm:flex items-center space-x-3">
-                            @auth
-                                <a href="{{ url('/dashboard') }}" class="text-sm font-semibold hover:text-blue-600 transition-colors">Dashboard</a>
-                            @else
-                                <a href="{{ route('login') }}" class="text-sm font-semibold hover:text-blue-600 transition-colors">Log in</a>
-                                @if (Route::has('register'))
-                                    <a href="{{ route('register') }}" class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20">Register</a>
-                                @endif
-                            @endauth
+                            <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-850 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center">
+                                <i class="fas fa-user-circle mr-1.5 text-blue-500"></i>
+                                {{ session('auth_user')['username'] }}
+                            </span>
+                            <form action="{{ route('logout') }}" method="POST" class="inline">
+                                @csrf
+                                <button type="submit" class="text-xs font-semibold text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl transition-all flex items-center">
+                                    <i class="fas fa-sign-out-alt mr-1.5"></i>
+                                    Logout
+                                </button>
+                            </form>
+                        </div>
+                    @else
+                        <div class="hidden sm:flex items-center">
+                            <a href="{{ route('login') }}" class="text-xs font-semibold text-blue-600 bg-blue-600/10 hover:bg-blue-600/20 px-3 py-1.5 rounded-xl transition-all flex items-center">
+                                <i class="fas fa-sign-in-alt mr-1.5"></i>
+                                Login
+                            </a>
                         </div>
                     @endif
                 </div>
@@ -115,7 +125,7 @@
                 </a>
 
                 <!-- Referensi MJKN -->
-                <a href="{{ route('referensi.pendafataran') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
+                <a href="{{ route('referensi.pendaftaran') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
                     <div class="w-14 h-14 rounded-2xl bg-teal-500/10 flex items-center justify-center text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-all duration-300">
                         <i class="fas fa-mobile-screen-button text-2xl"></i>
                     </div>
@@ -162,18 +172,32 @@
                     </div>
                 </a>
 
+                <!-- Flow Analytics & Monitoring -->
+                <a href="{{ route('monitoring.index') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
+                    <div class="w-14 h-14 rounded-2xl bg-blue-600/10 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300">
+                        <i class="fas fa-chart-line text-2xl"></i>
+                    </div>
+                    <div class="space-y-2">
+                        <h3 class="text-xl font-bold tracking-tight">Flow Analytics & Monitoring</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">
+                            Monitor real-time task durations, audit JKN timelines, analyze clinic performance, and identify operational bottlenecks.
+                        </p>
+                    </div>
+                    <div class="flex items-center text-blue-600 font-semibold text-sm pt-4">
+                        Open Monitoring <i class="fas fa-arrow-right ml-2 group-hover:translate-x-1 transition-transform"></i>
+                    </div>
+                </a>
+
                 <!-- BPJS Command Runner -->
-                <a href="{{ route('command.index') }}" class="glass card-hover group p-8 rounded-3xl space-y-6 lg:col-span-2">
-                    <div class="flex flex-col md:flex-row md:items-center md:space-x-8">
-                        <div class="w-14 h-14 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-all duration-300 mb-6 md:mb-0 shrink-0">
-                            <i class="fas fa-terminal text-2xl"></i>
-                        </div>
-                        <div class="space-y-2">
-                            <h3 class="text-xl font-bold tracking-tight">BPJS Command Terminal</h3>
-                            <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-xl">
-                                Execute administrative commands to update master data, doctor schedules, and antrean settings directly via our integrated CLI bridge.
-                            </p>
-                        </div>
+                <a href="{{ route('command.index') }}" class="glass card-hover group p-8 rounded-3xl space-y-6">
+                    <div class="w-14 h-14 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-all duration-300">
+                        <i class="fas fa-terminal text-2xl"></i>
+                    </div>
+                    <div class="space-y-2">
+                        <h3 class="text-xl font-bold tracking-tight">BPJS Command Terminal</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">
+                            Execute administrative commands to update master data, doctor schedules, and antrean settings.
+                        </p>
                     </div>
                     <div class="flex items-center text-amber-600 font-semibold text-sm pt-4">
                         Open Terminal <i class="fas fa-arrow-right ml-2 group-hover:translate-x-1 transition-transform"></i>
