@@ -71,7 +71,7 @@
             <tbody class="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
                 @foreach ($analytics['patients'] as $p)
                 <tr class="patient-row hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors group cursor-pointer"
-                    onclick="showPatientDetail('{{ $p['no_rawat'] }}')" data-rawat="{{ $p['no_rawat'] }}"
+                    onclick="showPatientDetail('{{ $p['kode_booking'] }}')" data-rawat="{{ $p['no_rawat'] }}"
                     data-name="{{ strtolower($p['nm_pasien']) }}" data-rm="{{ $p['no_rkm_medis'] }}"
                     data-clinic="{{ $p['nm_poli'] }}" data-status="{{ $p['status'] }}"
                     data-has-anomali="{{ $p['has_anomalies'] ? 'true' : 'false' }}"
@@ -90,8 +90,10 @@
                                 </span>
                                 @endif
                             </span>
-                            <span class="text-[11px] text-slate-400 font-semibold mt-1 flex flex-wrap items-center gap-1">
-                                RM: {{ $p['no_rkm_medis'] }} &bull; Jam Reg: {{ $p['jam_reg'] }} &bull; 
+                            <span class="text-[11px] text-slate-400 font-semibold mt-1 flex flex-wrap items-center gap-1.5">
+                                <span>RM: {{ $p['no_rkm_medis'] }}</span> &bull;
+                                <span>Booking: <code class="font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/50 dark:border-blue-800/50 text-[10px]">{{ $p['kode_booking'] }}</code></span> &bull;
+                                <span>Jam Reg: {{ $p['jam_reg'] }}</span> &bull;
                                 <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase {{ $p['sumber'] === 'Mobile JKN' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400' }}">
                                     {{ $p['sumber'] }}
                                 </span>
@@ -205,7 +207,7 @@
                         </div>
                     </td>
                     <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
-                        <button onclick="showPatientDetail('{{ $p['no_rawat'] }}')"
+                        <button onclick="showPatientDetail('{{ $p['kode_booking'] }}')"
                             class="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-500/10">
                             <i class="fas fa-search-plus text-xs"></i> Detail
                         </button>

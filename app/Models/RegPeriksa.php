@@ -18,6 +18,8 @@ class RegPeriksa extends Model
 
     protected $keyType = 'string';
 
+    public $timestamps = false;
+
     /**
      * The attributes that are mass assignable.
      *
@@ -114,6 +116,15 @@ class RegPeriksa extends Model
     public function referensiMobilejknBpjsAll()
     {
         return $this->hasMany(ReferensiMobilejknBpjs::class, 'no_rawat', 'no_rawat');
+    }
+
+    /**
+     * Get referensiMobilejknBpjs row with status Batal (for Task 99 no_booking).
+     */
+    public function referensiMobilejknBpjsBatal()
+    {
+        return $this->hasOne(ReferensiMobilejknBpjs::class, 'no_rawat', 'no_rawat')
+            ->where('status', 'Batal');
     }
 
     /**

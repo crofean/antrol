@@ -58,6 +58,11 @@ class FlowAnalyticsService
         }
 
         $durations = [
+            'checkin_to_nurse'     => $this->diffMinutes($tasks[3], $tasks[4]),
+            'nurse_to_doctor'      => $this->diffMinutes($tasks[4], $tasks[5]),
+            'doctor_to_pharmacy'   => $this->diffMinutes($tasks[5], $tasks[6]),
+            'pharmacy_to_done'     => $this->diffMinutes($tasks[6], $tasks[7]),
+            'total_time'           => $this->diffMinutes($tasks[3], $tasks[7] ?? $tasks[5] ?? null),
             'waktu_tunggu_poli'    => $this->diffMinutes($tasks[3], $tasks[4]),
             'waktu_layan_poli'     => $this->diffMinutes($tasks[4], $tasks[5]),
             'waktu_tunggu_farmasi' => $this->diffMinutes($tasks[5], $tasks[6]),
@@ -192,6 +197,13 @@ class FlowAnalyticsService
         return ['total' => $total, 'synced' => $synced, 'failed' => $failed];
     }
 
+    /**
+     * Get flow analytics data for the date range
+     *
+     * @param string|null $dateFrom
+     * @param string|null $dateTo
+     * @return array<string, mixed>
+     */
     public function getAnalyticsData(?string $dateFrom = null, ?string $dateTo = null): array
     {
         $dateFrom = $dateFrom ?: Carbon::now()->toDateString();
@@ -245,10 +257,10 @@ class FlowAnalyticsService
             ->orderBy('id')
             ->get();
 
-        $visitsByNoRawat = $visits->keyBy('no_rawat');
+        $visitsByKodebooking = $visits->keyBy('kodebooking');
 
         // Check if there are any registrations in SIMRS for this date range that are not in bpjs_patient_visits
-        $simrsRegsQuery = RegPeriksa::with(['referensiMobilejknBpjs', 'dokter', 'poliklinik'])
+        $simrsRegsQuery = RegPeriksa::with(['referensiMobilejknBpjsAll', 'dokter', 'poliklinik'])
             ->whereBetween('tgl_registrasi', [$dateFrom, $dateTo])
             ->where('kd_pj', $kdPj);
         if (! empty($excludePoliArray)) {
@@ -256,36 +268,56 @@ class FlowAnalyticsService
         }
         $simrsRegs = $simrsRegsQuery->get();
 
-        $missingRegs = [];
+        $missingBookings = [];
         foreach ($simrsRegs as $reg) {
-            if (! $visitsByNoRawat->has($reg->no_rawat)) {
-                $missingRegs[] = $reg;
+            $refAll = $reg->referensiMobilejknBpjsAll;
+            if ($refAll && $refAll->isNotEmpty()) {
+                foreach ($refAll as $ref) {
+                    if ($ref->nobooking && ! $visitsByKodebooking->has($ref->nobooking)) {
+                        $missingBookings[] = [
+                            'kodebooking' => $ref->nobooking,
+                            'no_rawat'    => $reg->no_rawat,
+                            'reg'         => $reg,
+                            'ref'         => $ref,
+                        ];
+                    }
+                }
+            } else {
+                $kodebooking = $reg->no_rawat;
+                if ($kodebooking && ! $visitsByKodebooking->has($kodebooking)) {
+                    $missingBookings[] = [
+                        'kodebooking' => $kodebooking,
+                        'no_rawat'    => $reg->no_rawat,
+                        'reg'         => $reg,
+                        'ref'         => null,
+                    ];
+                }
             }
         }
 
-        if (! empty($missingRegs)) {
+        if (! empty($missingBookings)) {
             $syncCount = 0;
-            foreach ($missingRegs as $reg) {
-                $kodebooking = $reg->referensiMobilejknBpjs?->nobooking ?? $reg->no_rawat;
-                if (! $kodebooking) {
-                    continue;
-                }
+            foreach ($missingBookings as $item) {
+                $kodebooking = $item['kodebooking'];
+                $noRawat     = $item['no_rawat'];
+                $reg         = $item['reg'];
+                $ref         = $item['ref'];
 
                 // Auto-sync up to 5 missing patients on page load to avoid request timeouts
                 if ($syncCount < 5) {
-                    $this->syncSinglePatient($kodebooking, $reg->no_rawat);
+                    $this->syncSinglePatient($kodebooking, $noRawat);
                     $syncCount++;
                 } else {
                     // Create shell record so they show up on the dashboard list
                     BpjsPatientVisit::updateOrCreate(
                         ['kodebooking' => $kodebooking],
                         [
-                            'no_rawat'       => $reg->no_rawat,
-                            'tanggalperiksa' => $reg->tgl_registrasi,
-                            'norm'           => $reg->no_rkm_medis,
-                            'kodepoli'       => $reg->kd_poli,
+                            'no_rawat'       => $noRawat,
+                            'tanggalperiksa' => $ref->tanggalperiksa ?? $reg->tgl_registrasi,
+                            'norm'           => $ref->norm ?? $reg->no_rkm_medis,
+                            'kodepoli'       => $ref->kodepoli ?? $reg->kd_poli,
                             'namapoli'       => $reg->poliklinik?->nm_poli,
-                            'kodedokter'     => $reg->dokter?->kd_dokter,
+                            'kodedokter'     => $ref->kodedokter ?? $reg->dokter?->kd_dokter,
                             'namadokter'     => $reg->dokter?->nm_dokter,
                             'task_data'      => [],
                             'last_sync'      => null,
@@ -331,13 +363,71 @@ class FlowAnalyticsService
         $daysInRange  = $dateFromObj->diffInDays($dateToObj) + 1;
         $missingDates = array_keys(array_diff_key($simrsRegistrationsByDate, $visitsCountByDate));
 
-        // 4. Build flows from JKN task data
+        // 4. Build flows from JKN task data via helper
+        $patientFlows = $this->buildPatientFlows($visits, $doctorMappings);
+
+        // Aggregate statistics using the computed JKN flows
+        $stats       = $this->calculateStatistics($patientFlows);
+        $clinicStats = $this->getClinicStatistics($patientFlows);
+        $doctorStats = $this->getDoctorStatistics($patientFlows);
+        $timeDist    = $this->getTimeDistribution($patientFlows);
+        $anomalies   = $this->aggregateAnomalies($patientFlows);
+        $globalStats = $this->calculateGlobalStats($patientFlows);
+
+        // Count cancelled patients
+        $batalCount = collect($patientFlows)->where('status', 'Batal')->count();
+
+        // Collect visits that need background sync (task_data is empty and status is not Batal)
+        $needsSync = [];
+        foreach ($visits as $visit) {
+            $hasTaskData = ($visit->task_data !== null && is_array($visit->task_data) && count($visit->task_data) > 0);
+            if (! $hasTaskData && $visit->status !== 'Batal') {
+                $needsSync[] = [
+                    'kodebooking' => $visit->kodebooking,
+                    'no_rawat'    => $visit->no_rawat,
+                ];
+            }
+        }
+
+        return [
+            'date_from'               => $dateFrom,
+            'date_to'                 => $dateTo,
+            'days_in_range'           => $daysInRange,
+            'days_with_registrations' => count($simrsRegistrationsByDate),
+            'days_with_data'          => count($visitsCountByDate),
+            'missing_dates'           => $missingDates,
+            'needs_sync'              => $needsSync,
+            'patients'                => $patientFlows,
+            'stats'                   => $stats,
+            'clinic_stats'            => $clinicStats,
+            'doctor_stats'            => $doctorStats,
+            'time_distribution'       => $timeDist,
+            'global_stats'            => $globalStats,
+            'anomalies'               => $anomalies,
+            'summary'                 => [
+                'total_patients'     => $stats['total_patients'],
+                'batal_patients'     => $batalCount,
+                'completed_patients' => $stats['completed'],
+                'waiting_patients'   => $stats['waiting'] + $stats['in_progress'],
+            ],
+        ];
+    }
+
+    /**
+     * Build patient flow structures from visit records
+     *
+     * @param \Illuminate\Support\Collection $visits
+     * @param \Illuminate\Support\Collection $doctorMappings
+     * @return array
+     */
+    private function buildPatientFlows($visits, $doctorMappings): array
+    {
         $patientFlows = [];
         foreach ($visits as $visit) {
             /** @var BpjsPatientVisit $visit */
             $realTimestamps = $visit->regPeriksa
-                ? $this->getRealTimestamps($visit->regPeriksa)
-                : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
+                ? $this->getRealTimestamps($visit->regPeriksa, $visit->kodebooking)
+                : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null, 99 => null];
 
             $taskData    = $visit->task_data;
             $hasBpjsData = ($taskData !== null && count($taskData) > 0);
@@ -362,6 +452,9 @@ class FlowAnalyticsService
                 $status = 'Belum Terkirim';
             }
 
+            $isBatalInSimrs = ($visit->regPeriksa && strtolower(trim($visit->regPeriksa->stts ?? '')) === 'batal');
+            $isRefBatal     = ($visit->status === 'Batal');
+
             $bpjsTimestamps = $this->getBpjsTimestamps($visit);
             $comparison     = $this->compareBpjsAndSimrs($bpjsTimestamps, $realTimestamps);
             $anomalies      = $this->detectPatientAnomalies($realTimestamps, $bpjsTimestamps, $durations);
@@ -379,7 +472,7 @@ class FlowAnalyticsService
             $waktuBatal = null;
             if ($hasBpjsData && is_array($taskData)) {
                 foreach ($taskData as $t) {
-                    if ((int)($t['taskid'] ?? 0) === 99 && !empty($t['wakturs'])) {
+                    if ((int) ($t['taskid'] ?? 0) === 99 && ! empty($t['wakturs'])) {
                         $parsedBatal = $this->parseTaskWaktu($t['wakturs']);
                         if ($parsedBatal) {
                             $waktuBatal = $parsedBatal->toDateTimeString();
@@ -388,7 +481,7 @@ class FlowAnalyticsService
                     }
                 }
             }
-            if (!$waktuBatal && $visit->regPeriksa) {
+            if (! $waktuBatal && $visit->regPeriksa) {
                 $batalRecord = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $visit->kodebooking)->first();
                 if ($batalRecord && $batalRecord->tanggalbatal) {
                     $waktuBatal = $batalRecord->tanggalbatal->toDateTimeString();
@@ -397,7 +490,7 @@ class FlowAnalyticsService
 
             // Determine source: JKN or Onsite
             $hasBooking = $visit->regPeriksa && $visit->regPeriksa->referensiMobilejknBpjs;
-            if (!$hasBooking && strpos($visit->kodebooking, '/') === false) {
+            if (! $hasBooking && strpos($visit->kodebooking, '/') === false) {
                 $hasBooking = $visit->regPeriksa && $visit->regPeriksa->referensiMobilejknBpjsAll && $visit->regPeriksa->referensiMobilejknBpjsAll->isNotEmpty();
             }
             $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
@@ -427,38 +520,7 @@ class FlowAnalyticsService
             ];
         }
 
-        // Aggregate statistics using the computed JKN flows
-        $stats       = $this->calculateStatistics($patientFlows);
-        $clinicStats = $this->getClinicStatistics($patientFlows);
-        $doctorStats = $this->getDoctorStatistics($patientFlows);
-        $timeDist    = $this->getTimeDistribution($patientFlows);
-        $anomalies   = $this->aggregateAnomalies($patientFlows);
-        $globalStats = $this->calculateGlobalStats($patientFlows);
-
-        // Count cancelled patients
-        $batalCount = collect($patientFlows)->where('status', 'Batal')->count();
-
-        return [
-            'date_from'               => $dateFrom,
-            'date_to'                 => $dateTo,
-            'days_in_range'           => $daysInRange,
-            'days_with_registrations' => count($simrsRegistrationsByDate),
-            'days_with_data'          => count($visitsCountByDate),
-            'missing_dates'           => $missingDates,
-            'patients'                => $patientFlows,
-            'stats'                   => $stats,
-            'clinic_stats'            => $clinicStats,
-            'doctor_stats'            => $doctorStats,
-            'time_distribution'       => $timeDist,
-            'global_stats'            => $globalStats,
-            'anomalies'               => $anomalies,
-            'summary'                 => [
-                'total_patients'     => $stats['total_patients'],
-                'batal_patients'     => $batalCount,
-                'completed_patients' => $stats['completed'],
-                'waiting_patients'   => $stats['waiting'] + $stats['in_progress'],
-            ],
-        ];
+        return $patientFlows;
     }
 
     private function calculateGlobalStats(array $patientFlows): array
@@ -500,6 +562,13 @@ class FlowAnalyticsService
         return $stats;
     }
 
+    /**
+     * Synchronize a single patient's task data from BPJS API
+     *
+     * @param string $kodebooking
+     * @param string $noRawat
+     * @return array<string, mixed>
+     */
     public function syncSinglePatient(string $kodebooking, string $noRawat): array
     {
         try {
@@ -510,70 +579,12 @@ class FlowAnalyticsService
                 'poliklinik',
                 'dokter',
             ])->find($noRawat);
+
             if (! $reg) {
                 return ['success' => false, 'message' => 'Pasien tidak ditemukan'];
             }
 
             $listTaskResult = app(MobileJknService::class)->getListTask($kodebooking);
-            $visitData      = [
-                'kodebooking'    => $kodebooking,
-                'last_sync'      => now(),
-                'no_rawat'       => $reg->no_rawat,
-                'tanggalperiksa' => $reg->tgl_registrasi,
-            ];
-
-            if ($reg->referensiMobilejknBpjs) {
-                $rawValidasi = $reg->referensiMobilejknBpjs->validasi ?? null;
-                $validasiVal = null;
-                if ($rawValidasi) {
-                    if ($rawValidasi instanceof \DateTimeInterface) {
-                        if ((int) $rawValidasi->format('Y') > 1970) {
-                            $validasiVal = $rawValidasi;
-                        }
-                    } else {
-                        $vStr = (string) $rawValidasi;
-                        if ($vStr !== '' && $vStr !== '0000-00-00 00:00:00' && strpos($vStr, '-0001') === false && strpos($vStr, '0000-') === false) {
-                            $validasiVal = $vStr;
-                        }
-                    }
-                }
-
-                $visitData = array_merge($visitData, [
-                    'nomorkartu'       => $reg->referensiMobilejknBpjs->nomorkartu ?? null,
-                    'nik'              => $reg->referensiMobilejknBpjs->nik ?? null,
-                    'nohp'             => $reg->referensiMobilejknBpjs->nohp ?? null,
-                    'norm'             => $reg->referensiMobilejknBpjs->norm ?? null,
-                    'kodepoli'         => $reg->referensiMobilejknBpjs->kodepoli ?? null,
-                    'namapoli'         => $reg->poliklinik->nm_poli ?? null,
-                    'kodedokter'       => $reg->referensiMobilejknBpjs->kodedokter ?? null,
-                    'namadokter'       => $reg->dokter->nm_dokter ?? null,
-                    'jampraktek'       => $reg->referensiMobilejknBpjs->jampraktek ?? null,
-                    'jeniskunjungan'   => $reg->referensiMobilejknBpjs->jeniskunjungan ? intval($reg->referensiMobilejknBpjs->jeniskunjungan) : null,
-                    'nomorreferensi'   => $reg->referensiMobilejknBpjs->nomorreferensi ?? null,
-                    'nomorantrean'     => $reg->referensiMobilejknBpjs->nomorantrean ?? null,
-                    'angkaantrean'     => $reg->referensiMobilejknBpjs->angkaantrean ?? null,
-                    'estimasidilayani' => $reg->referensiMobilejknBpjs->estimasidilayani ?? null,
-                    'sisakuotajkn'     => $reg->referensiMobilejknBpjs->sisakuotajkn ?? null,
-                    'kuotajkn'         => $reg->referensiMobilejknBpjs->kuotajkn ?? null,
-                    'sisakuotanonjkn'  => $reg->referensiMobilejknBpjs->sisakuotanonjkn ?? null,
-                    'kuotanonjkn'      => $reg->referensiMobilejknBpjs->kuotanonjkn ?? null,
-                    'status'           => $reg->referensiMobilejknBpjs->status ?? null,
-                    'validasi'         => $validasiVal,
-                ]);
-            } else {
-                $visitData = array_merge($visitData, [
-                    'nomorkartu'   => $reg->pasien->no_peserta ?? null,
-                    'nik'          => $reg->pasien->no_ktp ?? null,
-                    'nohp'         => $reg->pasien->no_tlp ?? null,
-                    'norm'         => $reg->no_rkm_medis,
-                    'kodepoli'     => $reg->kd_poli,
-                    'namapoli'     => $reg->poliklinik->nm_poli ?? null,
-                    'kodedokter'   => $reg->kd_dokter,
-                    'namadokter'   => $reg->dokter->nm_dokter ?? null,
-                    'nomorantrean' => $reg->no_reg,
-                    'angkaantrean' => intval($reg->no_reg),
-                ]);
-            }
 
             if (! $listTaskResult['success']) {
                 return [
@@ -582,12 +593,13 @@ class FlowAnalyticsService
                 ];
             }
 
+            $visitData              = $this->buildVisitDataFromReg($reg, $kodebooking);
             $visitData['task_data'] = $listTaskResult['data'] ?? [];
 
             BpjsPatientVisit::updateOrCreate(['kodebooking' => $kodebooking], $visitData);
 
             $cachedVisit    = BpjsPatientVisit::where('kodebooking', $kodebooking)->first();
-            $realTimestamps = $this->getRealTimestamps($reg);
+            $realTimestamps = $this->getRealTimestamps($reg, $kodebooking);
             $bpjsTimestamps = $this->getBpjsTimestamps($cachedVisit);
             $durations      = $this->computeDurations($bpjsTimestamps);
             $status         = $this->determineFlowStatus($bpjsTimestamps, $reg->stts ?? '');
@@ -607,6 +619,13 @@ class FlowAnalyticsService
                 'success' => true,
                 'patient' => [
                     'kode_booking'    => $kodebooking,
+                    'no_rawat'        => $reg->no_rawat,
+                    'no_rkm_medis'    => $reg->no_rkm_medis,
+                    'nm_pasien'       => $reg->pasien->nm_pasien ?? 'N/A',
+                    'nm_poli'         => $reg->poliklinik->nm_poli ?? 'N/A',
+                    'nm_dokter'       => $reg->dokter->nm_dokter ?? 'N/A',
+                    'tgl_registrasi'  => (string) $reg->tgl_registrasi,
+                    'timestamps_real' => $this->formatTimestampMap($realTimestamps),
                     'timestamps_sent' => $this->formatTimestampMap($bpjsTimestamps),
                     'durations'       => $mappedDurations,
                     'status'          => $status,
@@ -624,6 +643,76 @@ class FlowAnalyticsService
         }
     }
 
+    /**
+     * Helper to construct visit data payload from SIMRS registration record
+     *
+     * @param RegPeriksa $reg
+     * @param string $kodebooking
+     * @return array<string, mixed>
+     */
+    private function buildVisitDataFromReg(RegPeriksa $reg, string $kodebooking): array
+    {
+        $visitData = [
+            'kodebooking'    => $kodebooking,
+            'last_sync'      => now(),
+            'no_rawat'       => $reg->no_rawat,
+            'tanggalperiksa' => $reg->tgl_registrasi,
+        ];
+
+        if ($reg->referensiMobilejknBpjs) {
+            $rawValidasi = $reg->referensiMobilejknBpjs->validasi ?? null;
+            $validasiVal = null;
+            if ($rawValidasi) {
+                if ($rawValidasi instanceof \DateTimeInterface) {
+                    if ((int) $rawValidasi->format('Y') > 1970) {
+                        $validasiVal = $rawValidasi;
+                    }
+                } else {
+                    $vStr = (string) $rawValidasi;
+                    if ($vStr !== '' && $vStr !== '0000-00-00 00:00:00' && strpos($vStr, '-0001') === false && strpos($vStr, '0000-') === false) {
+                        $validasiVal = $vStr;
+                    }
+                }
+            }
+
+            return array_merge($visitData, [
+                'nomorkartu'       => $reg->referensiMobilejknBpjs->nomorkartu ?? null,
+                'nik'              => $reg->referensiMobilejknBpjs->nik ?? null,
+                'nohp'             => $reg->referensiMobilejknBpjs->nohp ?? null,
+                'norm'             => $reg->referensiMobilejknBpjs->norm ?? null,
+                'kodepoli'         => $reg->referensiMobilejknBpjs->kodepoli ?? null,
+                'namapoli'         => $reg->poliklinik?->nm_poli ?? null,
+                'kodedokter'       => $reg->referensiMobilejknBpjs->kodedokter ?? null,
+                'namadokter'       => $reg->dokter?->nm_dokter ?? null,
+                'jampraktek'       => $reg->referensiMobilejknBpjs->jampraktek ?? null,
+                'jeniskunjungan'   => $reg->referensiMobilejknBpjs->jeniskunjungan ? intval($reg->referensiMobilejknBpjs->jeniskunjungan) : null,
+                'nomorreferensi'   => $reg->referensiMobilejknBpjs->nomorreferensi ?? null,
+                'nomorantrean'     => $reg->referensiMobilejknBpjs->nomorantrean ?? null,
+                'angkaantrean'     => $reg->referensiMobilejknBpjs->angkaantrean ?? null,
+                'estimasidilayani' => $reg->referensiMobilejknBpjs->estimasidilayani ?? null,
+                'sisakuotajkn'     => $reg->referensiMobilejknBpjs->sisakuotajkn ?? null,
+                'kuotajkn'         => $reg->referensiMobilejknBpjs->kuotajkn ?? null,
+                'sisakuotanonjkn'  => $reg->referensiMobilejknBpjs->sisakuotanonjkn ?? null,
+                'kuotanonjkn'      => $reg->referensiMobilejknBpjs->kuotanonjkn ?? null,
+                'status'           => $reg->referensiMobilejknBpjs->status ?? null,
+                'validasi'         => $validasiVal,
+            ]);
+        }
+
+        return array_merge($visitData, [
+            'nomorkartu'   => $reg->pasien->no_peserta ?? null,
+            'nik'          => $reg->pasien->no_ktp ?? null,
+            'nohp'         => $reg->pasien->no_tlp ?? null,
+            'norm'         => $reg->no_rkm_medis,
+            'kodepoli'     => $reg->kd_poli,
+            'namapoli'     => $reg->poliklinik?->nm_poli ?? null,
+            'kodedokter'   => $reg->kd_dokter,
+            'namadokter'   => $reg->dokter?->nm_dokter ?? null,
+            'nomorantrean' => $reg->no_reg,
+            'angkaantrean' => intval($reg->no_reg),
+        ]);
+    }
+
     private function parseTaskWaktu($waktu, $defaultDate = null): ?Carbon
     {
         if (! $waktu) {
@@ -639,9 +728,9 @@ class FlowAnalyticsService
                 $waktu = "{$m[1]} {$m[2]}:{$m[3]}:{$m[4]}";
             }
             if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $waktu) && $defaultDate) {
-                $dateStr = $defaultDate instanceof Carbon ? $defaultDate->toDateString() : (string)$defaultDate;
+                $dateStr = $defaultDate instanceof Carbon ? $defaultDate->toDateString() : (string) $defaultDate;
                 $dateStr = explode(' ', $dateStr)[0];
-                $waktu = "{$dateStr} {$waktu}";
+                $waktu   = "{$dateStr} {$waktu}";
             }
         }
 
@@ -690,10 +779,10 @@ class FlowAnalyticsService
 
     public function compareBpjsAndSimrs(array $bpjsTimestamps, array $simrsTimestamps): array
     {
-        $comparison = [];
+        $comparison     = [];
         $tasksToMonitor = self::MONITOR_TASKS;
-        
-        if (!empty($bpjsTimestamps[99]) || !empty($simrsTimestamps[99])) {
+
+        if (! empty($bpjsTimestamps[99]) || ! empty($simrsTimestamps[99])) {
             $tasksToMonitor[] = 99;
         }
 
@@ -721,61 +810,65 @@ class FlowAnalyticsService
         return $comparison;
     }
 
-    public function getRealTimestamps(RegPeriksa $reg): array
+    public function getRealTimestamps(RegPeriksa $reg, ?string $kodebooking = null): array
     {
         $timestamps = [
-            1 => null,
-            2 => null,
-            3 => null,
-            4 => null,
-            5 => null,
-            6 => null,
-            7 => null,
+            1  => null,
+            2  => null,
+            3  => null,
+            4  => null,
+            5  => null,
+            6  => null,
+            7  => null,
             99 => null,
         ];
 
         // Task 1 & 2: Registration
-        $timestamps[1] = ($reg->tgl_registrasi && (string)$reg->jam_reg !== '00:00:00')
+        $timestamps[1] = ($reg->tgl_registrasi && (string) $reg->jam_reg !== '00:00:00')
             ? $this->parseTimestamp($reg->tgl_registrasi, $reg->jam_reg)
             : null;
         $timestamps[2] = $timestamps[1];
 
         // Task 3: Check-in / Waktu Validasi Mobile JKN (jika ada data), jika tidak ambil dari RegPeriksa (tgl_registrasi + jam_reg)
-        $refMjkn = $reg->referensiMobilejknBpjs;
-        if ($refMjkn && $refMjkn->validasi) {
-            $validasiStr = (string) $refMjkn->validasi;
-            if ($validasiStr !== '0000-00-00 00:00:00' && $validasiStr !== '' && strpos($validasiStr, '-0001') === false && strpos($validasiStr, '0000-') === false) {
-                $parsedV = Carbon::parse($validasiStr);
-                if ($parsedV->year > 1970) {
-                    $timestamps[3] = $parsedV;
+        $refMjkn = null;
+        if ($kodebooking) {
+            $refMjkn = \App\Models\ReferensiMobilejknBpjs::where('nobooking', $kodebooking)->first();
+        }
+        if (! $refMjkn) {
+            $refMjkn = $reg->referensiMobilejknBpjs;
+        }
+
+        if ($refMjkn) {
+            // Pasien MJKN: Jika validasi ada, parse datanya. Jika kosong/0000, kembalikan '00.00.00'
+            $timestamps[3] = '00.00.00';
+            if ($refMjkn->validasi) {
+                $validasiStr = (string) $refMjkn->validasi;
+                if ($validasiStr !== '0000-00-00 00:00:00' && $validasiStr !== '' && strpos($validasiStr, '-0001') === false && strpos($validasiStr, '0000-') === false) {
+                    $parsedV = Carbon::parse($validasiStr, 'Asia/Jakarta');
+                    if ($parsedV->year > 1970) {
+                        $timestamps[3] = $parsedV;
+                    }
                 }
             }
-        }
-        if (!$timestamps[3]) {
+        } else {
+            // Pasien Onsite: fallback ke jam registrasi SIMRS
             $timestamps[3] = $timestamps[1];
         }
 
         // Task 4: Pemeriksaan Ralan - Cek NIP Petugas (Perawat)
         if ($reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
             $nipsInPemeriksaan = $reg->pemeriksaanRalan->pluck('nip')->filter()->unique()->toArray();
-            $petugasNips = !empty($nipsInPemeriksaan) ? \App\Models\Petugas::whereIn('nip', $nipsInPemeriksaan)->pluck('nip')->toArray() : [];
+            $petugasNips       = ! empty($nipsInPemeriksaan) ? \App\Models\Petugas::whereIn('nip', $nipsInPemeriksaan)->pluck('nip')->toArray() : [];
 
             $pemeriksaanPetugas = $reg->pemeriksaanRalan
-                ->filter(function($p) use ($petugasNips) {
-                    if (empty($p->nip) || (string)$p->jam_rawat === '00:00:00') {
+                ->filter(function ($p) use ($petugasNips) {
+                    if (empty($p->nip) || (string) $p->jam_rawat === '00:00:00') {
                         return false;
                     }
                     return $p->petugas !== null || in_array($p->nip, $petugasNips);
                 })
                 ->sortBy('jam_rawat')
                 ->first();
-
-            if (!$pemeriksaanPetugas) {
-                $pemeriksaanPetugas = $reg->pemeriksaanRalan
-                    ->filter(fn($p) => (string)$p->jam_rawat !== '00:00:00')
-                    ->sortBy('jam_rawat')
-                    ->first();
-            }
 
             if ($pemeriksaanPetugas && $pemeriksaanPetugas->jam_rawat) {
                 $timestamps[4] = $this->parseTimestamp($pemeriksaanPetugas->tgl_perawatan, $pemeriksaanPetugas->jam_rawat);
@@ -785,24 +878,17 @@ class FlowAnalyticsService
         // Task 5: Pemeriksaan Ralan - Cek NIP Dokter
         if ($reg->pemeriksaanRalan && $reg->pemeriksaanRalan->isNotEmpty()) {
             $nipsInPemeriksaan = $reg->pemeriksaanRalan->pluck('nip')->filter()->unique()->toArray();
-            $dokterNips = !empty($nipsInPemeriksaan) ? \App\Models\Dokter::whereIn('kd_dokter', $nipsInPemeriksaan)->pluck('kd_dokter')->toArray() : [];
+            $dokterNips        = ! empty($nipsInPemeriksaan) ? \App\Models\Dokter::whereIn('kd_dokter', $nipsInPemeriksaan)->pluck('kd_dokter')->toArray() : [];
 
             $pemeriksaanDokter = $reg->pemeriksaanRalan
-                ->filter(function($p) use ($dokterNips) {
-                    if (empty($p->nip) || (string)$p->jam_rawat === '00:00:00') {
+                ->filter(function ($p) use ($dokterNips) {
+                    if (empty($p->nip) || (string) $p->jam_rawat === '00:00:00') {
                         return false;
                     }
                     return $p->dokter !== null || in_array($p->nip, $dokterNips);
                 })
                 ->sortByDesc('jam_rawat')
                 ->first();
-
-            if (!$pemeriksaanDokter) {
-                $pemeriksaanDokter = $reg->pemeriksaanRalan
-                    ->filter(fn($p) => (string)$p->jam_rawat !== '00:00:00')
-                    ->sortByDesc('jam_rawat')
-                    ->first();
-            }
 
             if ($pemeriksaanDokter && $pemeriksaanDokter->jam_rawat) {
                 $timestamps[5] = $this->parseTimestamp($pemeriksaanDokter->tgl_perawatan, $pemeriksaanDokter->jam_rawat);
@@ -812,7 +898,7 @@ class FlowAnalyticsService
         // Task 6: Resep Obat - Jam Peresapan / Pembuatan Resep (ResepObat.jam)
         if ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
             $resep6 = $reg->resepObat
-                ->filter(fn($r) => !empty($r->jam) && (string)$r->jam !== '00:00:00')
+                ->filter(fn($r) => ! empty($r->jam) && (string) $r->jam !== '00:00:00')
                 ->sortByDesc('jam')
                 ->first();
             if ($resep6 && $resep6->jam) {
@@ -823,7 +909,7 @@ class FlowAnalyticsService
         // Task 7: Resep Obat - Jam Penyerahan Obat (ResepObat.jam_penyerahan)
         if ($reg->resepObat && $reg->resepObat->isNotEmpty()) {
             $resep7 = $reg->resepObat
-                ->filter(fn($r) => !empty($r->jam_penyerahan) && (string)$r->jam_penyerahan !== '00:00:00')
+                ->filter(fn($r) => ! empty($r->jam_penyerahan) && (string) $r->jam_penyerahan !== '00:00:00')
                 ->sortByDesc('jam_penyerahan')
                 ->first();
             if ($resep7 && $resep7->jam_penyerahan) {
@@ -831,10 +917,16 @@ class FlowAnalyticsService
             }
         }
 
-        // Task 99: Pembatalan Antrean
-        $batal = \App\Models\ReferensiMobilejknBpjsBatal::where('no_rawat_batal', $reg->no_rawat)->first();
+        // Task 99: Pembatalan Antrean (prioritaskan nobooking spesifik)
+        $batal = null;
+        if ($kodebooking) {
+            $batal = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
+        }
+        if (! $batal && (! $kodebooking || ($refMjkn && $refMjkn->status === 'Batal'))) {
+            $batal = \App\Models\ReferensiMobilejknBpjsBatal::where('no_rawat_batal', $reg->no_rawat)->first();
+        }
         if ($batal && $batal->tanggalbatal) {
-            $timestamps[99] = Carbon::parse($batal->tanggalbatal);
+            $timestamps[99] = Carbon::parse($batal->tanggalbatal, 'Asia/Jakarta');
         }
 
         return $timestamps;
@@ -863,31 +955,13 @@ class FlowAnalyticsService
 
     public function computeDurations(array $timestamps): array
     {
-        $durations = [
-            'checkin_to_nurse'   => null,
-            'nurse_to_doctor'    => null,
-            'doctor_to_pharmacy' => null,
-            'pharmacy_to_done'   => null,
-            'total_time'         => null,
+        return [
+            'checkin_to_nurse'   => $this->diffMinutes($timestamps[3] ?? null, $timestamps[4] ?? null),
+            'nurse_to_doctor'    => $this->diffMinutes($timestamps[4] ?? null, $timestamps[5] ?? null),
+            'doctor_to_pharmacy' => $this->diffMinutes($timestamps[5] ?? null, $timestamps[6] ?? null),
+            'pharmacy_to_done'   => $this->diffMinutes($timestamps[6] ?? null, $timestamps[7] ?? null),
+            'total_time'         => $this->diffMinutes($timestamps[3] ?? null, $timestamps[7] ?? $timestamps[5] ?? null),
         ];
-
-        if ($timestamps[3] && $timestamps[4]) {
-            $durations['checkin_to_nurse'] = $timestamps[4]->diffInMinutes($timestamps[3]);
-        }
-        if ($timestamps[4] && $timestamps[5]) {
-            $durations['nurse_to_doctor'] = $timestamps[5]->diffInMinutes($timestamps[4]);
-        }
-        if ($timestamps[5] && $timestamps[6]) {
-            $durations['doctor_to_pharmacy'] = $timestamps[6]->diffInMinutes($timestamps[5]);
-        }
-        if ($timestamps[6] && $timestamps[7]) {
-            $durations['pharmacy_to_done'] = $timestamps[7]->diffInMinutes($timestamps[6]);
-        }
-        if ($timestamps[3] && $timestamps[7]) {
-            $durations['total_time'] = $timestamps[7]->diffInMinutes($timestamps[3]);
-        }
-
-        return $durations;
     }
 
     private function determineFlowStatus(array $bpjsTimestamps, string $stts): string
@@ -1200,72 +1274,93 @@ class FlowAnalyticsService
         return $dist;
     }
 
-    public function buildPatientDetailData(string $noRawat, MobileJknService $mobileJknService): ?array
+    public function buildPatientDetailData(string $identifier, MobileJknService $mobileJknService): ?array
     {
-        $bpjsVisit = BpjsPatientVisit::where('no_rawat', $noRawat)
-            ->orWhere('kodebooking', $noRawat)
+        $bpjsVisit = BpjsPatientVisit::where('kodebooking', $identifier)
+            ->orWhere('no_rawat', $identifier)
             ->first();
+
+        $noRawat = $bpjsVisit?->no_rawat ?? $identifier;
 
         $reg = RegPeriksa::with([
-                'pasien',
-                'poliklinik',
-                'dokter',
-                'referensiMobilejknBpjs',
-                'referensiMobilejknBpjsTaskid',
-                'bridgingSep',
-                'pemeriksaanRalan.petugas',
-                'pemeriksaanRalan.dokter',
-                'resepObat',
-            ])
-            ->where('no_rawat', $bpjsVisit?->no_rawat ?? $noRawat)
+            'pasien',
+            'poliklinik',
+            'dokter',
+            'referensiMobilejknBpjs',
+            'referensiMobilejknBpjsAll',
+            'referensiMobilejknBpjsTaskid',
+            'bridgingSep',
+            'pemeriksaanRalan.petugas',
+            'pemeriksaanRalan.dokter',
+            'resepObat',
+        ])
+            ->where('no_rawat', $noRawat)
             ->first();
 
-        if (!$reg && !$bpjsVisit) {
+        if (! $reg && ! $bpjsVisit) {
             return null;
         }
 
-        $kodebooking = $reg?->referensiMobilejknBpjs?->nobooking ?? $bpjsVisit?->kodebooking ?? $noRawat;
-
-        $batalInfo = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)
-            ->orWhere('no_rawat_batal', $reg?->no_rawat ?? $noRawat)
-            ->first();
-
-        if ($kodebooking && (!$bpjsVisit || !$bpjsVisit->last_sync || $bpjsVisit->last_sync->lt(now()->subMinutes(15)))) {
-            $mobileJknService->getListTask($kodebooking);
-            $bpjsVisit = BpjsPatientVisit::where('no_rawat', $noRawat)
-                ->orWhere('kodebooking', $noRawat)
+        // Try matching specific ReferensiMobilejknBpjs record by nobooking first
+        $refThisBooking = \App\Models\ReferensiMobilejknBpjs::where('nobooking', $identifier)->first();
+        if (! $refThisBooking && $reg) {
+            $refThisBooking = \App\Models\ReferensiMobilejknBpjs::where('no_rawat', $noRawat)
+                ->orderByRaw("CASE WHEN status = 'Batal' THEN 1 ELSE 0 END ASC")
+                ->orderBy('tanggalperiksa', 'desc')
                 ->first();
         }
 
-        $realTimestamps = $reg ? $this->getRealTimestamps($reg) : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
+        $kodebooking = $refThisBooking?->nobooking ?? $bpjsVisit?->kodebooking ?? $identifier;
+
+        $batalInfo = null;
+        if ($refThisBooking?->status === 'Batal' || ($refThisBooking === null && strtolower(trim($reg?->stts ?? '')) === 'batal')) {
+            $batalRecord = \App\Models\ReferensiMobilejknBpjsBatal::where('nobooking', $kodebooking)->first();
+            if (! $batalRecord && $noRawat && (! $refThisBooking || $refThisBooking->status === 'Batal')) {
+                $batalRecord = \App\Models\ReferensiMobilejknBpjsBatal::where('no_rawat_batal', $noRawat)->first();
+            }
+            if ($batalRecord) {
+                $batalInfo = $batalRecord;
+            }
+        }
+
+        if ($kodebooking && (! $bpjsVisit || ! $bpjsVisit->last_sync || $bpjsVisit->last_sync->lt(now()->subMinutes(15)))) {
+            $mobileJknService->getListTask($kodebooking);
+            $bpjsVisit = BpjsPatientVisit::where('kodebooking', $kodebooking)->first() ?? BpjsPatientVisit::where('no_rawat', $noRawat)->first();
+        }
+
+        $realTimestamps = $reg ? $this->getRealTimestamps($reg, $kodebooking) : [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null, 99 => null];
 
         if ($bpjsVisit) {
             $bpjsTimestamps = $this->getBpjsTimestamps($bpjsVisit);
         } else {
-            $bpjsTimestamps = [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null];
+            $bpjsTimestamps = [1 => null, 2 => null, 3 => null, 4 => null, 5 => null, 6 => null, 7 => null, 99 => null];
         }
 
         $hasBpjsData = ($bpjsVisit && $bpjsVisit->task_data !== null && count($bpjsVisit->task_data) > 0);
 
         if ($hasBpjsData) {
             $durations = $this->computeDurationsFromTaskData($bpjsVisit->task_data);
-            $status = $this->determineStatusFromTaskData($bpjsVisit->task_data);
+            $status    = $this->determineStatusFromTaskData($bpjsVisit->task_data);
         } else {
             $durations = [
-                'checkin_to_nurse'   => null,
-                'nurse_to_doctor'    => null,
-                'doctor_to_pharmacy' => null,
-                'pharmacy_to_done'   => null,
-                'total_time'         => null,
+                'checkin_to_nurse'     => null,
+                'nurse_to_doctor'      => null,
+                'doctor_to_pharmacy'   => null,
+                'pharmacy_to_done'     => null,
+                'total_time'           => null,
                 'waktu_tunggu_poli'    => null,
                 'waktu_layan_poli'     => null,
                 'waktu_tunggu_farmasi' => null,
                 'waktu_layan_farmasi'  => null,
                 'total_waktu_rs'       => null,
             ];
-            $status = 'Belum Terkirim';
+            $status = ($refThisBooking?->status === 'Batal' || ($refThisBooking === null && strtolower(trim($reg?->stts ?? '')) === 'batal')) ? 'Batal' : 'Belum Terkirim';
         }
-        $anomalies = $this->detectPatientAnomalies($realTimestamps, $bpjsTimestamps, $durations);
+
+        if ($refThisBooking?->status === 'Batal' || ($refThisBooking === null && strtolower(trim($reg?->stts ?? '')) === 'batal')) {
+            $status = 'Batal';
+        }
+        $anomalies  = $this->detectPatientAnomalies($realTimestamps, $bpjsTimestamps, $durations);
         $comparison = $this->compareBpjsAndSimrs($bpjsTimestamps, $realTimestamps);
 
         $anomalyHints = [];
@@ -1303,36 +1398,36 @@ class FlowAnalyticsService
         }
 
         $hasBooking = $reg && $reg->referensiMobilejknBpjs;
-        if (!$hasBooking && strpos($kodebooking, '/') === false) {
+        if (! $hasBooking && strpos($kodebooking, '/') === false) {
             $hasBooking = $reg && $reg->referensiMobilejknBpjsAll && $reg->referensiMobilejknBpjsAll->isNotEmpty();
         }
         $sumber = $hasBooking ? 'Mobile JKN' : 'Onsite';
 
         return [
-            'sumber'         => $sumber,
-            'no_rawat'       => $reg?->no_rawat ?? $bpjsVisit?->no_rawat,
-            'no_rkm_medis'   => $reg?->no_rkm_medis ?? $bpjsVisit?->norm,
-            'nm_pasien'      => $reg?->pasien->nm_pasien ?? 'N/A',
-            'no_ktp'         => $reg?->pasien->no_ktp ?? $bpjsVisit?->nik ?? null,
-            'no_kartu_bpjs'  => $noKartuBpjs,
-            'tgl_lahir'      => $reg?->pasien?->tgl_lahir ? Carbon::parse($reg->pasien->tgl_lahir)->format('d M Y') : null,
-            'jk'             => $reg?->pasien->jk ?? null,
-            'nm_poli'        => $reg?->poliklinik->nm_poli ?? $bpjsVisit?->namapoli ?? 'N/A',
-            'nm_dokter'      => $docName,
-            'tgl_registrasi' => ($bpjsVisit && $bpjsVisit->tanggalperiksa instanceof Carbon) ? $bpjsVisit->tanggalperiksa->format('d M Y') : ($reg?->tgl_registrasi instanceof Carbon ? $reg->tgl_registrasi->format('d M Y') : (string) $reg?->tgl_registrasi),
-            'jam_reg'        => $reg?->jam_reg ? ($reg->jam_reg instanceof \DateTimeInterface ? $reg->jam_reg->format('H:i') : substr((string) $reg->jam_reg, 0, 5)) : null,
-            'stts'           => $reg?->stts ?? '',
-            'has_booking'    => (bool) ($reg?->referensiMobilejknBpjs ?? $bpjsVisit),
-            'kode_booking'   => $kodebooking,
+            'sumber'          => $sumber,
+            'no_rawat'        => $reg?->no_rawat ?? $bpjsVisit?->no_rawat,
+            'no_rkm_medis'    => $reg?->no_rkm_medis ?? $bpjsVisit?->norm,
+            'nm_pasien'       => $reg?->pasien->nm_pasien ?? 'N/A',
+            'no_ktp'          => $reg?->pasien->no_ktp ?? $bpjsVisit?->nik ?? null,
+            'no_kartu_bpjs'   => $noKartuBpjs,
+            'tgl_lahir'       => $reg?->pasien?->tgl_lahir ? Carbon::parse($reg->pasien->tgl_lahir)->format('d M Y') : null,
+            'jk'              => $reg?->pasien->jk ?? null,
+            'nm_poli'         => $reg?->poliklinik->nm_poli ?? $bpjsVisit?->namapoli ?? 'N/A',
+            'nm_dokter'       => $docName,
+            'tgl_registrasi'  => ($bpjsVisit && $bpjsVisit->tanggalperiksa instanceof Carbon) ? $bpjsVisit->tanggalperiksa->format('d M Y') : ($reg?->tgl_registrasi instanceof Carbon ? $reg->tgl_registrasi->format('d M Y') : (string) $reg?->tgl_registrasi),
+            'jam_reg'         => $reg?->jam_reg ? ($reg->jam_reg instanceof \DateTimeInterface  ? $reg->jam_reg->format('H:i') : substr((string) $reg->jam_reg, 0, 5)) : null,
+            'stts'            => $reg?->stts ?? '',
+            'has_booking'     => (bool) ($reg?->referensiMobilejknBpjs ?? $bpjsVisit),
+            'kode_booking'    => $kodebooking,
             'timestamps_real' => $this->formatTimestampMap($realTimestamps),
             'timestamps_sent' => $this->formatTimestampMap($bpjsTimestamps),
-            'durations'      => $durations,
-            'status'         => $status,
-            'anomalies'      => $anomalies,
-            'anomaly_hints'  => $anomalyHints,
-            'comparison'     => $comparison,
-            'is_bpjs_source' => (bool) $bpjsVisit,
-            'batal_info'     => $batalInfo ? [
+            'durations'       => $durations,
+            'status'          => $status,
+            'anomalies'       => $anomalies,
+            'anomaly_hints'   => $anomalyHints,
+            'comparison'      => $comparison,
+            'is_bpjs_source'  => (bool) $bpjsVisit,
+            'batal_info'      => $batalInfo ? [
                 'tanggal_batal' => $batalInfo->tanggalbatal ? Carbon::parse($batalInfo->tanggalbatal)->format('d M Y H:i:s') : null,
                 'keterangan'    => $batalInfo->keterangan ?? 'Dibatalkan',
             ] : null,
@@ -1342,8 +1437,14 @@ class FlowAnalyticsService
     public function formatTimestampMap(array $timestamps): object
     {
         $result = [];
-        foreach ($timestamps as $taskId => $carbon) {
-            $result['task_' . $taskId] = $carbon?->toDateTimeString();
+        foreach ($timestamps as $taskId => $val) {
+            if ($val instanceof Carbon) {
+                $result['task_' . $taskId] = $val->toDateTimeString();
+            } elseif (is_string($val)) {
+                $result['task_' . $taskId] = $val;
+            } else {
+                $result['task_' . $taskId] = null;
+            }
         }
         return (object) $result;
     }
